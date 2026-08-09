@@ -1,0 +1,8 @@
+# Normalise to LF in the repository. The tree is developed on Windows and built on Linux;
+# CRLF leaking into shell scripts or the Dockerfile breaks the container build.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

@@ -1,0 +1,165 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentgate"
+version = "0.1.0"
+description = "Gated agent runtime for regulated environments: policy, budget, and human approval gates on every agent action, with an append-only audit trail."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Hamza Ahmed Wajeeh", email = "hamzaahmedwajeeh@gmail.com" }]
+maintainers = [{ name = "Hamza Ahmed Wajeeh", email = "hamzaahmedwajeeh@gmail.com" }]
+keywords = [
+    "langgraph",
+    "langchain",
+    "ai-agents",
+    "llm",
+    "human-in-the-loop",
+    "governance",
+    "audit",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    # Orchestration. Pinned to the current 1.x line; see docs/adr/0006.
+    "langgraph==1.2.10",
+    "langchain==1.3.14",
+    "langchain-core==1.5.3",
+    "langchain-openai==1.4.2",
+    # Checkpointers. Selected at runtime by config, never by editing code.
+    "langgraph-checkpoint-sqlite==3.1.1",
+    "langgraph-checkpoint-postgres==3.1.2",
+    "psycopg[binary,pool]==3.3.4",
+    # Configuration and validation.
+    "pydantic==2.13.4",
+    "pydantic-settings==2.15.0",
+    # Already required by pydantic-settings, declared because config.py imports it directly
+    # to detect misspelled variables in a .env that the settings source would silently skip.
+    "python-dotenv==1.2.2",
+    # Surfaces.
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.1",
+    "sse-starlette==3.4.8",
+    "typer==0.27.1",
+    "httpx==0.28.1",
+    # Observability.
+    "structlog==26.1.0",
+    "prometheus-client==0.26.0",
+    "opentelemetry-api==1.44.0",
+    "opentelemetry-sdk==1.44.0",
+    "opentelemetry-exporter-otlp-proto-http==1.44.0",
+    "opentelemetry-instrumentation-fastapi==0.65b0",
+]
+
+[project.urls]
+Homepage = "https://github.com/HamzaAhmedWajeeh/agentgate"
+Source = "https://github.com/HamzaAhmedWajeeh/agentgate"
+Issues = "https://github.com/HamzaAhmedWajeeh/agentgate/issues"
+Changelog = "https://github.com/HamzaAhmedWajeeh/agentgate/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "hypothesis==6.165.2",
+    "ruff==0.16.2",
+    "mypy==2.3.0",
+    "pre-commit==4.6.1",
+    "detect-secrets==1.5.0",
+    "pip-audit==2.10.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentgate"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "A",     # shadowing builtins
+    "ARG",   # unused arguments
+    "ASYNC", # async correctness
+    "B",     # bugbear
+    "C4",    # comprehensions
+    "DTZ",   # naive datetimes -- audit timestamps must be tz-aware
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "I",     # import sorting
+    "ISC",   # implicit string concat
+    "N",     # naming
+    "PIE",
+    "PL",    # pylint subset
+    "PTH",   # use pathlib
+    "RET",
+    "RUF",
+    "S",     # bandit
+    "SIM",
+    "T20",   # no print/pprint -- logging is structured
+    "TRY",   # exception antipatterns
+    "UP",    # pyupgrade
+    "W",     # pycodestyle warnings
+]
+ignore = [
+    "TRY003", # long messages in raise; config errors must be readable at the raise site
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # assert is the point
+    "PLR2004", # magic values are clearer than named constants in assertions
+    "ARG001",  # fixtures are injected and not always referenced
+]
+"scripts/**" = ["T20"] # scripts talk to a human on stdout
+# A CLI surface writes to stdout by definition. Everywhere else, output is structured logging.
+"src/agentgate/__main__.py" = ["T20"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config -m 'not live'"
+asyncio_mode = "auto"
+markers = [
+    "live: hits a real model provider, costs money, and is deselected by default",
+]
+
+[tool.coverage.run]
+source = ["src/agentgate"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]

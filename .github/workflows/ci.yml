@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Every job runs on the fake lane. No secret is configured for this workflow, and none is
+  # needed: if a change makes CI require an API key, CI fails rather than quietly costing money.
+  AGENTGATE_LANE: fake
+  AGENTGATE_ENVIRONMENT: ci
+  UV_LOCKED: "1"
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-groups
+      - name: ruff check
+        run: uv run ruff check --output-format=github src tests
+      - name: ruff format
+        run: uv run ruff format --check src tests
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-groups
+      - run: uv run mypy
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --locked --all-groups
+      - name: pytest
+        # No API key is present in this environment. A test that reaches the network fails here.
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 7
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-groups
+      - name: Export the locked dependency set
+        # Auditing the environment would audit agentgate itself, which is not on PyPI, and
+        # --strict treats an unauditable distribution as a failure.
+        run: >-
+          uv export --all-groups --no-emit-project --no-hashes
+          --format requirements-txt -o .audit-requirements.txt --quiet
+      - run: uv run pip-audit --strict -r .audit-requirements.txt
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.2.0
+      - name: Build image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: agentgate:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Image starts and reports its configuration
+        run: |
+          docker run --rm --user 10001:10001 agentgate:ci > config.json
+          test -s config.json
+          python -c "import json,sys; d=json.load(open('config.json')); assert d['lane']=='fake', d; assert d['environment']=='docker', d"
+      - name: Image does not run as root
+        run: |
+          uid="$(docker run --rm --entrypoint id agentgate:ci -u)"
+          echo "container uid: $uid"
+          test "$uid" != "0"

@@ -1,0 +1,61 @@
+# Local stack.
+#
+# `docker compose up -d` starts Postgres and runs the agentgate image against it. The image
+# currently resolves its configuration and exits; it becomes a long-running service when the
+# API surface lands, at which point a healthcheck is declared alongside it.
+
+name: agentgate
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentgate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentgate}
+      POSTGRES_DB: ${POSTGRES_DB:-agentgate}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Named user and database, because the bare form checks the wrong ones and reports
+      # healthy while the database the application needs does not yet exist.
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentgate} -d ${POSTGRES_DB:-agentgate}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  agentgate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      AGENTGATE_ENVIRONMENT: docker
+      AGENTGATE_LOG_JSON: "true"
+      AGENTGATE_POSTGRES_DSN: >-
+        postgresql://${POSTGRES_USER:-agentgate}:${POSTGRES_PASSWORD:-agentgate}@postgres:5432/${POSTGRES_DB:-agentgate}
+      # A container binding to loopback is unreachable from the host.
+      AGENTGATE_API_HOST: 0.0.0.0
+    volumes:
+      - agentgate-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+volumes:
+  postgres-data:
+  agentgate-data:
