@@ -3,6 +3,12 @@
 The value of the matrix is not that it is complete. It is that a reader can tell which rows
 were measured, how, and when. A row nobody checked is worse than a missing row, because it
 invites a caller down a path that fails somewhere far away from here.
+
+Nothing here asserts what a constructed client *would* send. Anything about a value reaching a
+provider -- output ceilings, temperature, the model actually called -- is asserted against an
+observed request body in tests/integration/test_resilience.py. A client attribute and the wire
+are not the same thing: langchain-openai configures `max_tokens` and emits
+`max_completion_tokens`, so an attribute check passes while the request carries another field.
 """
 
 from __future__ import annotations
@@ -146,21 +152,6 @@ def test_the_fake_lane_builds_without_any_configuration() -> None:
     assert isinstance(model, FakeChatModel)
 
 
-def test_output_ceiling_follows_the_call_class() -> None:
-    """A routing decision must not be able to spend a synthesis-sized budget."""
-    settings = build(
-        lane="sovereign",
-        sovereign_base_url="http://127.0.0.1:1/v1",
-        sovereign_model="stub",
-        model_prices_usd_per_million=priced("stub"),
-    )
-
-    routing = build_model(settings, Tier.CHEAP, CallClass.ROUTING)
-    synthesis = build_model(settings, Tier.CHEAP, CallClass.SYNTHESIS)
-
-    assert routing.max_tokens < synthesis.max_tokens  # type: ignore[attr-defined]
-
-
 def test_both_networked_lanes_are_the_same_integration_pointed_elsewhere() -> None:
     """The sovereign lane is cheap to support precisely because it is not a second client."""
     sovereign = build(
@@ -202,17 +193,6 @@ def test_the_router_can_override_the_configured_lane() -> None:
     assert isinstance(
         build_model(settings, Tier.CHEAP, CallClass.ROUTING, lane=Lane.FAKE), FakeChatModel
     )
-
-
-def test_temperature_is_zero_everywhere_by_default() -> None:
-    settings = build(
-        lane="sovereign",
-        sovereign_base_url="http://127.0.0.1:1/v1",
-        sovereign_model="stub",
-        model_prices_usd_per_million=priced("stub"),
-    )
-
-    assert build_model(settings, Tier.CAPABLE, CallClass.SYNTHESIS).temperature == 0.0  # type: ignore[attr-defined]
 
 
 def test_the_resilient_chain_builds_on_the_fake_lane() -> None:

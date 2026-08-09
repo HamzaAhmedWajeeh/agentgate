@@ -63,8 +63,27 @@ def on_the_wire(stub: StubServer, field: str) -> object:
     ceiling is configured as ``max_tokens`` but langchain-openai 1.4.2 emits it as
     ``max_completion_tokens``, following the current OpenAI API. A test that checked the
     client attribute would have passed while the wire carried something else entirely.
+
+    Two ways a wire assertion can rot into a pass, both closed here:
+
+    *An empty log.* If no request reached the stub, indexing would raise -- but a test written
+    with ``.get()`` and a ``None`` expectation would quietly succeed. Absence of evidence is
+    not the assertion anyone meant to write.
+
+    *A renamed field.* ``.get()`` returns ``None`` for a field the provider no longer sends,
+    which compares equal to nothing useful and reads as a pass in the wrong hands. Missing is
+    an error here, not a value.
     """
-    return stub.behaviour.requests_seen[0].get(field)
+    assert stub.behaviour.requests_seen, (
+        "no request reached the stub, so there is nothing on the wire to assert about; "
+        "an empty log makes this test vacuous rather than passing"
+    )
+    body = stub.behaviour.requests_seen[0]
+    assert field in body, (
+        f"{field!r} was not sent. The provider client may have renamed it. "
+        f"Fields actually on the wire: {sorted(body)}"
+    )
+    return body[field]
 
 
 # ------------------------------------------------------------------- transient failures
@@ -169,3 +188,40 @@ def test_temperature_reaches_the_provider_as_zero(stub: StubServer) -> None:
     build_resilient_model(settings_for(stub, max_retries=0), CallClass.ROUTING).invoke("x")
 
     assert on_the_wire(stub, "temperature") == 0.0
+
+
+# ------------------------------------------------------------------- the assertions themselves
+
+
+def test_a_wire_assertion_with_no_request_fails_rather_than_passing(
+    stub: StubServer,
+) -> None:
+    """A test that asserts about the wire without sending anything is vacuous, not green.
+
+    Guards the whole family above: if a refactor stopped the chain from issuing a request,
+    every wire assertion should go red, not quietly stop checking anything.
+    """
+    with pytest.raises(AssertionError, match="no request reached the stub"):
+        on_the_wire(stub, "temperature")
+
+
+def test_a_renamed_wire_field_fails_loudly(stub: StubServer) -> None:
+    """The exact trap that caught this suite once already.
+
+    ``max_tokens`` is what the client is configured with and what a reasonable person would
+    assert on. It is not what goes over the wire. Reading a field that is not there has to be
+    an error, because ``.get()`` returning ``None`` is indistinguishable from a real value in
+    a badly written assertion.
+    """
+    build_resilient_model(settings_for(stub, max_retries=0), CallClass.ROUTING).invoke("x")
+
+    with pytest.raises(AssertionError, match="was not sent"):
+        on_the_wire(stub, "max_tokens")
+
+
+def test_the_failure_message_names_what_was_actually_sent(stub: StubServer) -> None:
+    """So the next person hits a signpost rather than a mystery."""
+    build_resilient_model(settings_for(stub, max_retries=0), CallClass.ROUTING).invoke("x")
+
+    with pytest.raises(AssertionError, match="max_completion_tokens"):
+        on_the_wire(stub, "max_tokens")
