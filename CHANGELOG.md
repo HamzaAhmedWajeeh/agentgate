@@ -27,5 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exiting non-zero when the environment does not describe a runnable system.
 - `Makefile` with a `make.ps1` shim exposing the same targets on Windows, so the documented
   commands work on every machine the project is developed on.
+- Multi-stage `Dockerfile` producing a 404 MB image that runs as uid 10001, and a Compose
+  stack with Postgres. No healthcheck is declared yet; there is no endpoint to call.
+- GitHub Actions CI: ruff, ruff-format, mypy, pytest on Python 3.12 and 3.13, `pip-audit`,
+  and a Docker build that asserts the image runs non-root. Fake lane throughout, no secrets.
 
 [Unreleased]: https://github.com/HamzaAhmedWajeeh/agentgate/commits/main/
