@@ -1,19 +1,23 @@
-"""Five cases against a real provider. Everything else in this repository runs offline.
+"""Six cases against a real provider. Everything else in this repository runs offline.
 
 Deselected by default and never run in CI. Reached only through `make test-live`, which prints
 an estimate, asks for confirmation, and aborts if actual spend exceeds that estimate by more
 than the configured factor.
 
-Kept to five because each one costs money and because the offline suite already proves the
+Kept few because each one costs money and because the offline suite already proves the
 mechanics. What cannot be proven offline is what a *real* provider does, and that is all these
 ask:
 
 - that the configured identifier is one the key can actually use
-- whether the cloud lane supports native structured output (a capability-matrix row, currently
-  absent because nothing has measured it)
+- that the recorded structured-output capability is still true, failing if the record and
+  reality disagree, and failing with instructions if no record exists
+- that the repair loop works here regardless, since it is what an unmeasured lane gets
 - that usage metadata arrives, since the spend guard accounts from it
 - that the output ceiling is honoured by the provider and not merely sent
-- that the whole resilient chain works end to end
+
+Discovery is not done here. `scripts/probe_capabilities.py` produces facts; these tests
+enforce the facts that were recorded. A test that has to accept whichever answer it gets is
+unfalsifiable, and a record nothing checks goes stale the first time a provider changes.
 
 Every call records into a ledger the gatekeeper reads. A case that spends without recording
 would make the enforcement blind, so the fixture records unconditionally.
@@ -32,7 +36,12 @@ from pydantic import BaseModel, Field
 
 from agentgate.config import CallClass, Lane, Settings, Tier, get_settings
 from agentgate.guardrails.spend import SpendLedger
-from agentgate.models.registry import build_model, build_resilient_model
+from agentgate.models.registry import (
+    Capability,
+    build_model,
+    build_resilient_model,
+    observation_for,
+)
 from agentgate.models.structured import invoke_with_repair
 
 pytestmark = pytest.mark.live
@@ -108,32 +117,63 @@ def test_the_configured_model_identifier_is_usable(settings: Settings, ledger: S
 # ------------------------------------------------------------------------------- 2
 
 
-def test_whether_the_cloud_lane_supports_native_structured_output(
+def test_the_recorded_structured_output_capability_is_still_true(
     settings: Settings, ledger: SpendLedger
 ) -> None:
-    """Measures the capability-matrix row that is currently absent.
+    """Enforce the matrix row rather than discover it.
 
-    The matrix has no entry for (CLOUD, NATIVE_STRUCTURED_OUTPUT) because nothing had asked.
-    This is the probe that would justify adding one. It asserts only that *some* definite
-    answer is obtainable -- either the native path yields a valid object, or it does not and
-    the repair loop does. Both are legitimate results; an unmeasured row is not.
+    Discovery is `scripts/probe_capabilities.py`. Its job is to produce a fact. This test's
+    job is to hold that fact to account: exercise the behaviour and fail if reality and the
+    record disagree.
 
-    Whichever way it lands, record it in CAPABILITY_MATRIX with provenance LIVE_PROBE and
-    today's date. Do not guess the other way.
+    Splitting them matters because a test that discovers cannot also enforce -- it has to
+    accept whichever answer it gets, which makes it unfalsifiable. And a record nothing checks
+    goes stale the first time a provider changes, which is the failure the whole
+    provenance-and-dates design exists to prevent.
     """
+    recorded = observation_for(settings.lane, Capability.NATIVE_STRUCTURED_OUTPUT)
+
+    if recorded is None:
+        pytest.fail(
+            f"No CAPABILITY_MATRIX entry for ({settings.lane.value}, "
+            "native_structured_output), so there is nothing to enforce.\n"
+            "Run:  uv run python scripts/probe_capabilities.py\n"
+            "then paste the entry it emits into src/agentgate/models/registry.py."
+        )
+
     model = build_model(settings, Tier.CHEAP, CallClass.CLASSIFICATION)
     prompt = "Classify the sensitivity of: 'the office coffee machine is broken'."
 
-    native_worked = True
     try:
         result = model.with_structured_output(Sensitivity).invoke([HumanMessage(prompt)])
+        observed = isinstance(result, Sensitivity)
     except Exception:  # any failure here means the same thing: not natively supported
-        native_worked = False
-        result = invoke_with_repair(model, Sensitivity, prompt)
+        observed = False
+
+    assert observed == recorded.supported, (
+        f"The matrix records native structured output on the {settings.lane.value} lane as "
+        f"{recorded.supported} (provenance {recorded.provenance.value}, recorded "
+        f"{recorded.recorded_on}), but this run observed {observed}. Either the provider "
+        "changed or the record was wrong. Re-run scripts/probe_capabilities.py and update "
+        "the entry -- do not edit the assertion."
+    )
+
+
+def test_the_repair_loop_still_works_on_this_lane_whatever_the_matrix_says(
+    settings: Settings, ledger: SpendLedger
+) -> None:
+    """The fallback has to work regardless, since it is what an unmeasured lane gets.
+
+    Every lane with no recorded capability is routed here by default, so this path being
+    broken would be invisible right up until it mattered.
+    """
+    model = build_model(settings, Tier.CHEAP, CallClass.CLASSIFICATION)
+
+    result = invoke_with_repair(
+        model, Sensitivity, "Classify the sensitivity of: 'the fire alarm was tested today'."
+    )
 
     assert isinstance(result, Sensitivity)
-    # Printed rather than asserted: this test exists to produce a fact, not to enforce one.
-    print(f"\n  OBSERVED: cloud lane native structured output = {native_worked}")
 
 
 # ------------------------------------------------------------------------------- 3
