@@ -25,5 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggestion rather than silently ignored.
 - `python -m agentgate` prints the resolved configuration as JSON with every secret masked,
   exiting non-zero when the environment does not describe a runnable system.
+- `Makefile` with a `make.ps1` shim exposing the same targets on Windows, so the documented
+  commands work on every machine the project is developed on.
 
 [Unreleased]: https://github.com/HamzaAhmedWajeeh/agentgate/commits/main/
