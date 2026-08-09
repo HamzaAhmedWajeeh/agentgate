@@ -18,5 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   strict mode over `src/`, and pytest with a `live` marker deselected by default.
 - Pre-commit hooks mirroring the CI gate, including `detect-secrets` against a committed
   baseline.
+- `agentgate.config`: the single source of every tunable, validated at import so a broken
+  environment fails at startup with a message naming the variable at fault. Defaults are
+  offline and free -- the `fake` lane with an in-memory checkpointer -- so reaching a real
+  provider is opt-in. Unrecognised `AGENTGATE_*` variables are rejected with a spelling
+  suggestion rather than silently ignored.
 
 [Unreleased]: https://github.com/HamzaAhmedWajeeh/agentgate/commits/main/

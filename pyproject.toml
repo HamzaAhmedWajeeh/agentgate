@@ -45,6 +45,9 @@ dependencies = [
     # Configuration and validation.
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
+    # Already required by pydantic-settings, declared because config.py imports it directly
+    # to detect misspelled variables in a .env that the settings source would silently skip.
+    "python-dotenv==1.2.2",
     # Surfaces.
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.1",
