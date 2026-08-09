@@ -144,6 +144,9 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 minversion = "9.0"
 testpaths = ["tests"]
+# Puts the repo root on sys.path so `tests.doubles` imports as a package. The doubles are
+# shared across test modules and are library code, not fixtures local to one file.
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config -m 'not live'"
 asyncio_mode = "auto"
 markers = [
