@@ -55,7 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Configuration tolerates unrelated keys in a shared `.env` rather than rejecting them.
   Typo protection for the `AGENTGATE_` namespace is unchanged and remains stricter than
-  `extra="forbid"` ever was.
+  `extra="forbid"` ever was. Every unprefixed environment name the application reads is now
+  declared explicitly and pinned by a test that asserts no field consumes an undeclared one.
+  See ADR 0009.
 - Configuration is validated on an explicit `get_settings()` call at each entry point
   rather than as a side effect of importing `agentgate.config`. The startup guarantee is
   unchanged; importing the module now has no side effects and cannot raise. See ADR 0007.
