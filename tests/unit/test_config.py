@@ -9,10 +9,16 @@ Three properties matter more than the rest and are asserted directly:
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from agentgate.config import (
+    ENV_PREFIX,
     CheckpointerBackend,
     ConfigurationError,
     Lane,
@@ -282,6 +288,31 @@ def test_get_settings_reflects_the_environment_after_a_cache_clear(
     get_settings.cache_clear()
 
     assert get_settings().max_iterations == 3
+
+
+def test_importing_the_module_has_no_side_effects(tmp_path: Path) -> None:
+    """Importing must not raise, however broken the environment is.
+
+    Validation used to run at import, which made the import statement itself the thing that
+    failed -- a landmine every future entry point had to know to step around, and one that
+    already produced a wrong exit code once. A cold subprocess is the only way to observe
+    this; by the time an in-process test runs, the module is already in sys.modules.
+    """
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(ENV_PREFIX)}
+    clean.pop("OPENAI_API_KEY", None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import agentgate.config"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={**clean, "AGENTGATE_LANE": "cloud"},  # cloud with no key: definitely invalid
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
 
 
 def test_get_settings_raises_an_operator_readable_error(
