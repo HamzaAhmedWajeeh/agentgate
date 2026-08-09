@@ -81,3 +81,80 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentgate"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "A",     # shadowing builtins
+    "ARG",   # unused arguments
+    "ASYNC", # async correctness
+    "B",     # bugbear
+    "C4",    # comprehensions
+    "DTZ",   # naive datetimes -- audit timestamps must be tz-aware
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "I",     # import sorting
+    "ISC",   # implicit string concat
+    "N",     # naming
+    "PIE",
+    "PL",    # pylint subset
+    "PTH",   # use pathlib
+    "RET",
+    "RUF",
+    "S",     # bandit
+    "SIM",
+    "T20",   # no print/pprint -- logging is structured
+    "TRY",   # exception antipatterns
+    "UP",    # pyupgrade
+    "W",     # pycodestyle warnings
+]
+ignore = [
+    "TRY003", # long messages in raise; config errors must be readable at the raise site
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",    # assert is the point
+    "PLR2004", # magic values are clearer than named constants in assertions
+    "ARG001",  # fixtures are injected and not always referenced
+]
+"scripts/**" = ["T20"] # scripts talk to a human on stdout
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config -m 'not live'"
+asyncio_mode = "auto"
+markers = [
+    "live: hits a real model provider, costs money, and is deselected by default",
+]
+
+[tool.coverage.run]
+source = ["src/agentgate"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
