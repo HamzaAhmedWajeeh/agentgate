@@ -263,6 +263,13 @@ class Settings(BaseSettings):
     """Hard ceiling across every run in this process. Bounds a loop of cheap runs, which no
     per-run ceiling can catch."""
 
+    live_spend_tolerance: Annotated[float, Field(gt=1.0, le=20.0)] = 3.0
+    """How far the live suite may exceed its pre-run estimate before aborting.
+
+    An estimate that is only advisory stops nothing. Must exceed 1.0, since an estimate is a
+    guess and a threshold at exactly the guess would abort on rounding.
+    """
+
     recursion_limit: Positive = 40
     """LangGraph's own super-step ceiling. A backstop behind ``max_iterations``, not a
     substitute for it: hitting this one is a bug, hitting the other one is a policy."""
