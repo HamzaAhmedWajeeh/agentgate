@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: ruff, ruff-format, mypy, pytest on Python 3.12 and 3.13, `pip-audit`,
   and a Docker build that asserts the image runs non-root. Fake lane throughout, no secrets.
 
+- Deterministic fake lane (`agentgate.models.fake`) with scriptable replies, scriptable
+  failures, and honest `usage_metadata`. The whole suite and all of CI run on it.
+- Cost controls in config: per-call-class output ceilings, per-run and per-session spend
+  ceilings, and a per-model price table. A networked lane with an unpriced model refuses to
+  start rather than treating unknown cost as zero.
+
 ### Changed
 
 - Configuration is validated on an explicit `get_settings()` call at each entry point

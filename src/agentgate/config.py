@@ -33,6 +33,8 @@ from typing import Annotated, Any, Final
 from dotenv import dotenv_values
 from pydantic import (
     AliasChoices,
+    BaseModel,
+    ConfigDict,
     Field,
     SecretStr,
     ValidationError,
@@ -68,6 +70,35 @@ class Tier(StrEnum):
 
     CAPABLE = "capable"
     CHEAP = "cheap"
+
+
+class CallClass(StrEnum):
+    """What a model call is for.
+
+    Output ceilings are set per class rather than globally. Classification and routing produce
+    a handful of tokens and are capped tightly; only final synthesis gets a generous budget.
+    A single global ``max_tokens`` would have to be sized for synthesis, which means every
+    cheap call would carry a synthesis-sized worst case.
+    """
+
+    ROUTING = "routing"
+    CLASSIFICATION = "classification"
+    RESEARCH = "research"
+    SYNTHESIS = "synthesis"
+    REPAIR = "repair"
+
+
+class ModelPrice(BaseModel):
+    """Price in USD per million tokens, input and output priced separately."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input: Annotated[float, Field(ge=0)]
+    output: Annotated[float, Field(ge=0)]
+
+    def cost_usd(self, input_tokens: int, output_tokens: int) -> float:
+        """Cost of one call, in USD."""
+        return (input_tokens * self.input + output_tokens * self.output) / 1_000_000
 
 
 class CheckpointerBackend(StrEnum):
@@ -148,6 +179,24 @@ class Settings(BaseSettings):
     request_timeout_seconds: PositiveFloat = 30.0
     max_retries: Annotated[int, Field(ge=0, le=5)] = 2
 
+    # Output ceilings per call class. Tight where the answer is a label or a route, generous
+    # only where the answer is the deliverable.
+    max_tokens_routing: Positive = 128
+    max_tokens_classification: Positive = 256
+    max_tokens_research: Positive = 1_024
+    max_tokens_synthesis: Positive = 4_096
+    max_tokens_repair: Positive = 512
+
+    model_prices_usd_per_million: dict[str, ModelPrice] = Field(default_factory=dict)
+    """Per-model prices, keyed by model identifier.
+
+    Deliberately empty by default. Prices change, this repository cannot fetch them, and a
+    default of zero would silently disarm the spend guard -- an unpriced model would look
+    free and no ceiling would ever be crossed. An unpriced model on a networked lane is a
+    startup error instead. ``.env.example`` documents the format and where the numbers come
+    from.
+    """
+
     # ---------------------------------------------------------------- cloud lane
 
     openai_api_key: SecretStr | None = Field(
@@ -183,7 +232,14 @@ class Settings(BaseSettings):
     """Supervisor hand-offs allowed before the budget guard forces finalisation."""
 
     max_total_tokens: Positive = 120_000
+
     max_spend_usd: PositiveFloat = 0.50
+    """Hard ceiling for a single run. Crossing it aborts the graph; it is not a warning."""
+
+    max_session_spend_usd: PositiveFloat = 5.00
+    """Hard ceiling across every run in this process. Bounds a loop of cheap runs, which no
+    per-run ceiling can catch."""
+
     recursion_limit: Positive = 40
     """LangGraph's own super-step ceiling. A backstop behind ``max_iterations``, not a
     substitute for it: hitting this one is a bug, hitting the other one is a policy."""
@@ -300,6 +356,43 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _every_reachable_model_has_a_price(self) -> Settings:
+        """A networked lane must be able to cost every model it can reach.
+
+        Without a price the spend guard cannot account, and the safe reading of "unknown
+        cost" is a refusal to start -- not an assumption of zero, which would leave the
+        ceiling permanently uncrossed while real money was spent.
+        """
+        if not self.requires_network:
+            return self
+        unpriced = sorted(
+            {
+                model
+                for model in (self.model_for(tier) for tier in Tier)
+                if model not in self.model_prices_usd_per_million
+            }
+        )
+        if unpriced:
+            msg = (
+                f"no price configured for {', '.join(unpriced)}; the spend guard cannot "
+                f"account for a model it cannot cost. Set {ENV_PREFIX}"
+                "MODEL_PRICES_USD_PER_MILLION (see .env.example)"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _session_ceiling_is_not_below_the_run_ceiling(self) -> Settings:
+        if self.max_session_spend_usd < self.max_spend_usd:
+            msg = (
+                f"{ENV_PREFIX}MAX_SESSION_SPEND_USD ({self.max_session_spend_usd}) is below "
+                f"{ENV_PREFIX}MAX_SPEND_USD ({self.max_spend_usd}); the session ceiling bounds "
+                "every run together, so a single run could never reach its own limit"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
     def _budget_ceilings_are_ordered(self) -> Settings:
         if self.recursion_limit <= self.max_iterations:
             msg = (
@@ -316,6 +409,36 @@ class Settings(BaseSettings):
     def requires_network(self) -> bool:
         """Whether the configured lane reaches outside the process."""
         return self.lane is not Lane.FAKE
+
+    def max_tokens_for(self, call_class: CallClass) -> int:
+        """Output ceiling for a class of call."""
+        match call_class:
+            case CallClass.ROUTING:
+                return self.max_tokens_routing
+            case CallClass.CLASSIFICATION:
+                return self.max_tokens_classification
+            case CallClass.RESEARCH:
+                return self.max_tokens_research
+            case CallClass.SYNTHESIS:
+                return self.max_tokens_synthesis
+            case CallClass.REPAIR:
+                return self.max_tokens_repair
+
+    def price_for(self, model: str) -> ModelPrice:
+        """Price for a model identifier.
+
+        Raises:
+            ConfigurationError: if the model has no configured price. Validation makes this
+                unreachable at startup for a networked lane, so reaching it means a model was
+                selected at runtime that configuration never saw.
+        """
+        if self.lane is Lane.FAKE:
+            return ModelPrice(input=0.0, output=0.0)
+        try:
+            return self.model_prices_usd_per_million[model]
+        except KeyError:
+            msg = f"no price configured for model {model!r}; refusing to guess at spend"
+            raise ConfigurationError(msg) from None
 
     def model_for(self, tier: Tier) -> str:
         """Resolve the model identifier for a tier on the configured lane.
