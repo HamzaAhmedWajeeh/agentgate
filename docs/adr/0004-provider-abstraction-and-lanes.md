@@ -57,7 +57,14 @@ that record rather than on a guess. See the inventory below.
 This is the part worth reading. An abstraction over three providers *will* leak; the only
 question is whether the leaks are written down or discovered at three in the morning.
 
-Every row was established by running something. None is inferred.
+Two kinds of entry appear here, and they turned out to be the same shape. Some are differences
+between providers. Others are places where **a tool reported success without having checked** --
+mypy accepting a node it should have rejected, a configuration key accepted and discarded. Both
+are gaps between what something claims and what it does, and both are only findable by running
+the thing rather than reading about it.
+
+Every row was established by running something. None is inferred. Each is pinned by a test, so
+a row that stops being true fails the build instead of quietly rotting.
 
 ### 1. Native structured output — the sovereign lane does not have it
 
@@ -79,7 +86,27 @@ Every row was established by running something. None is inferred.
 | **Consequence** | A general rule for this codebase: **every assertion about what reaches a provider reads the observed request body, never the constructed client.** A client attribute and the wire are different things, and the gap between them is invisible until something depends on it. The registry tests carry a note saying so, and the wire helper raises on a missing field rather than returning `None`, so a rename goes red instead of vacuous. |
 | **Recorded** | Here, and in the docstrings of `tests/integration/test_resilience.py`. Version-specific: re-check on any `langchain-openai` upgrade. |
 
-### 3. `extra="forbid"` does not police environment variables
+### 3. `functools.partial` hides a wrongly-shaped node from mypy
+
+| | |
+| --- | --- |
+| **Difference** | `partial` types as `partial[T]`, whose parameter list is effectively `...`. Wrapping a graph node in it silences the signature check completely — including for a node that takes a second required argument nothing will ever supply. mypy strict reports success; the runtime raises `TypeError`. |
+| **How established** | A real mypy run over two snippets differing only in whether the node is wrapped. The unwrapped one is rejected; the wrapped one passes. |
+| **Evidence** | `tests/integration/test_toolchain_blind_spots.py::test_partial_hides_a_wrongly_shaped_node_from_mypy`, with `::test_without_partial_mypy_catches_the_same_node` as the control and `::test_the_wrongly_shaped_node_really_does_fail_at_runtime` closing the loop. |
+| **Consequence** | Lane nodes in `build.py` are bound with an explicit closure rather than `partial`, and the closure's return type is a `GraphNode` protocol so the signature is still checked. Note the trap in the control itself: the first attempt at it annotated the graph as `Any`, which erased `add_node` and made *both* snippets pass — a test proving nothing while looking green. |
+| **Recorded** | Pinned. If mypy ever closes this, the test fails and the workaround can go. |
+
+### 4. `interrupt_before` is compile-time only, and ignored silently otherwise
+
+| | |
+| --- | --- |
+| **Difference** | `interrupt_before` passed in the invoke config is discarded without warning. Only the `compile()` argument has any effect. |
+| **How established** | Observed. A resume test asked the graph to pause before `finalise` via config and got a fully completed run back, with the finalisation audit event present. |
+| **Evidence** | `tests/integration/test_toolchain_blind_spots.py::test_interrupt_before_in_the_invoke_config_is_silently_ignored`, paired with `::test_interrupt_before_at_compile_time_actually_pauses`. |
+| **Consequence** | This is worse than an error, because the failure is invisible: a gate that does not gate looks exactly like a gate that does. `build_graph` takes `interrupt_before` as a compile-time parameter and says so. Phase 5's approval gate uses `interrupt()` from inside the node instead, which pauses from the node body rather than from the graph definition and therefore cannot be silently dropped by being passed in the wrong place. |
+| **Recorded** | Pinned before the behaviour becomes load-bearing, which is the only useful time to record it. |
+
+### 5. `extra="forbid"` does not police environment variables
 
 | | |
 | --- | --- |
@@ -89,7 +116,7 @@ Every row was established by running something. None is inferred.
 | **Consequence** | A bespoke guard scans the environment and `.env` for prefixed names matching no field and suggests the closest match. Without it, an operator can believe a budget is in force while the process runs on defaults. |
 | **Recorded** | ADR 0009. |
 
-### 4. A shared `.env` is read by fields that never declared the name
+### 6. A shared `.env` is read by fields that never declared the name
 
 | | |
 | --- | --- |
@@ -99,7 +126,7 @@ Every row was established by running something. None is inferred.
 | **Consequence** | Every unprefixed read is now an explicit `AliasChoices`, and the permitted set is asserted against the model so widening it is deliberate. |
 | **Recorded** | ADR 0009. |
 
-### 5. Not measured yet, and therefore not claimed
+### 7. Not measured yet, and therefore not claimed
 
 These are absent from the capability matrix on purpose. An absent row means "nobody asked",
 which `supports()` reads as unsupported — the pessimistic direction, where being wrong costs

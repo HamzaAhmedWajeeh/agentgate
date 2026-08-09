@@ -7,7 +7,7 @@ records where things ended up; this one is updated in the same commit as the cod
 so a row marked *done* has a file behind it today. Rows marked *pending* name the phase that
 will land them, and are not claims about anything that exists.
 
-Status: **Phase 2 complete.** Phases 3 to 9 pending.
+Status: **Phase 3 complete.** Phases 4 to 9 pending.
 
 ---
 
@@ -15,18 +15,18 @@ Status: **Phase 2 complete.** Phases 3 to 9 pending.
 
 | Concept | Status | Location |
 | --- | --- | --- |
-| Typed state with `add_messages` reducer | pending — Phase 3 | `graph/state.py` |
-| `operator.add` reducer on append-only findings | pending — Phase 3 | `graph/state.py` |
-| Last-write-wins fields + `InvalidUpdateError` note | pending — Phase 3 | `graph/state.py` |
-| Conditional edge returning a `Literal` | pending — Phase 3 | `graph/routing.py` |
-| `Command` combining update and `goto` | pending — Phase 3 | `graph/nodes/supervisor.py` |
+| Typed state with `add_messages` reducer | **done** | `graph/state.py:AgentState.messages` |
+| `operator.add` reducer on append-only findings | **done** | `graph/state.py:AgentState.findings`, `.audit_trail` |
+| Last-write-wins fields + `InvalidUpdateError` note | **done** | `graph/state.py` docstring; demonstrated in `tests/integration/test_parallel_writes.py` |
+| Conditional edge returning a `Literal` | **done** | `graph/routing.py:route_by_policy` |
+| `Command` combining update and `goto` | **done** | `graph/nodes/supervisor.py:supervise` |
 | `Command(graph=Command.PARENT)` handoff | pending — Phase 4 | `graph/subgraphs/retrieval.py` |
 | `Send` fan-out, reducer fan-in | pending — Phase 4 | `graph/nodes/researcher.py` |
 | Compiled subgraph used as a node | pending — Phase 4 | `graph/subgraphs/retrieval.py` |
-| `InMemorySaver` | pending — Phase 3 | `graph/build.py` |
-| `SqliteSaver` | pending — Phase 3 | `graph/build.py` |
-| `PostgresSaver` | pending — Phase 3 | `graph/build.py` |
-| Checkpointer chosen by config, never by editing code | **done** | `config.py` `CheckpointerBackend`; selection in Phase 3 |
+| `InMemorySaver` | **done** | `graph/build.py:checkpointer_for` |
+| `SqliteSaver` | **done** | `graph/build.py:checkpointer_for` |
+| `PostgresSaver` | **done** (wired; server-backed run is Phase 8) | `graph/build.py:checkpointer_for` |
+| Checkpointer chosen by config, never by editing code | **done** | `graph/build.py`; asserted in `tests/integration/test_graph.py` |
 | `interrupt()` approval gate | pending — Phase 5 | `graph/nodes/approval.py` |
 | Resume with `Command(resume=...)` | pending — Phase 5 | `graph/nodes/approval.py` |
 | Test proving node re-execution from top on resume | pending — Phase 5 | `tests/integration/` |
@@ -39,8 +39,8 @@ Status: **Phase 2 complete.** Phases 3 to 9 pending.
 | Time travel exposed via CLI | pending — Phase 6 | `cli.py` |
 | `stream_mode=["updates", "messages"]` | pending — Phase 7 | `api/` |
 | Streaming surfaced as SSE | pending — Phase 7 | `api/` |
-| `recursion_limit` | **done** (configured) | `config.py:recursion_limit`; wired in Phase 3 |
-| Iteration counter + budget check in a conditional edge | pending — Phase 3 | `graph/routing.py` |
+| `recursion_limit` | **done** | passed at invoke; ordering vs the budget guard asserted in `tests/integration/test_graph.py` |
+| Iteration counter + budget check in a conditional edge | **done** | `graph/routing.py:route_by_budget`; counter in `state.iterations` |
 
 ## LangChain
 
@@ -48,10 +48,10 @@ Status: **Phase 2 complete.** Phases 3 to 9 pending.
 | --- | --- | --- |
 | `init_chat_model` as the provider abstraction | **done** | `models/registry.py:_init_openai_compatible` |
 | `base_url` pattern for the sovereign lane | **done** | `models/registry.py:build_model`; `config.py:sovereign_base_url` |
-| LCEL pipe chain | pending — Phase 3 | `graph/nodes/classify.py` |
+| LCEL pipe chain | pending — Phase 4 | `graph/nodes/researcher.py` |
 | `RunnableParallel` | pending — Phase 4 | `graph/nodes/researcher.py` |
-| `with_structured_output` — classifier | pending — Phase 3 | `graph/nodes/classify.py` (mechanism in `models/structured.py`) |
-| `with_structured_output` — supervisor router | pending — Phase 3 | `graph/routing.py` |
+| `with_structured_output` — classifier | **done** | `graph/nodes/classify.py` via `models/structured.py:invoke_structured` |
+| `with_structured_output` — supervisor router | pending — Phase 4 | `graph/routing.py`, once the supervisor chooses between workers |
 | Validate-and-repair structured output fallback | **done** | `models/structured.py:invoke_with_repair` |
 | ↳ its test, against a lane that really lacks native support | **done** | `tests/integration/test_sovereign_lane_structured_output.py::test_repair_loop_rescues_prose_wrapped_json_from_the_sovereign_lane` |
 | ↳ the leak it exists for, demonstrated | **done** | same file, `::test_native_structured_output_fails_against_the_sovereign_lane` |
@@ -89,6 +89,12 @@ Things this build surfaced that were not on the original list, kept because each
 | Tracing off by default, backend as deployment choice | **done** (config) | `config.py:TracingBackend`; instrumentation in Phase 8 |
 | Test suite cannot phone home | **done** | `tests/conftest.py:TRACING_PREFIXES`; `tests/unit/test_offline_isolation.py` |
 | Live suite bounded by estimate, confirmation, and hard abort | **done** | `scripts/run_live.py` |
+| Capability discovery split from capability enforcement | **done** | `scripts/probe_capabilities.py` produces; `tests/live/` enforces |
+| Ceilings derived from a measured run, not chosen | **done** | `scripts/measure_run.py`; basis recorded in `.env.example` |
+| Policy gate fails closed on an unparseable verdict | **done** | `graph/nodes/classify.py`; `tests/unit/test_nodes.py` |
+| Crash mid-run resumes from the last checkpoint | **done** | `tests/integration/test_crash_and_resume.py` |
+| `partial` erases node signatures from mypy | **done** (pinned) | `tests/integration/test_toolchain_blind_spots.py` |
+| `interrupt_before` in invoke config is silently ignored | **done** (pinned) | `tests/integration/test_toolchain_blind_spots.py` |
 
 ## Decision records
 
