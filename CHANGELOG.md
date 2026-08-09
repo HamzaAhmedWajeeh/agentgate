@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ceilings, and a per-model price table. A networked lane with an unpriced model refuses to
   start rather than treating unknown cost as zero.
 
+- Lane registry and capability matrix. Every entry records how it was learned (live probe,
+  stub, in-process, or operator declaration) and when; the suite fails if any entry on a
+  networked lane rests on assumption. An unmeasured capability reads as unsupported.
+- Structured output with a validate-and-repair fallback for lanes lacking native support,
+  proven against a committed OpenAI-compatible stub that returns prose-wrapped JSON.
+- `make models` lists the identifiers a key can reach and emits a zeroed, paste-ready price
+  table. It states plainly that the API exposes no pricing, and infers nothing from a name.
+
 ### Changed
 
 - Configuration is validated on an explicit `get_settings()` call at each entry point
