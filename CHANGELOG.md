@@ -51,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exporter behind it. Off by default, and a backend selected without its destination is a
   startup error. Design recorded in ADR 0008; implementation lands in Phase 8.
 
+- Spend ledger with per-run and per-session ceilings, accounting from `usage_metadata`. A
+  reply without usage is an error rather than a free call.
+- `make test-live` estimates the cost, asks for confirmation, and aborts if actual spend
+  exceeds the estimate by more than a configurable factor. Five live cases, deselected by
+  default and never run in CI.
+- `docs/concept-map.md`, maintained as the build proceeds, and ADR 0004 carrying the leak
+  inventory: what is known to differ between lanes and how each difference was established.
+
 ### Changed
 
 - Configuration tolerates unrelated keys in a shared `.env` rather than rejecting them.
