@@ -125,9 +125,13 @@ ignore = [
     "PLR2004", # magic values are clearer than named constants in assertions
     "ARG001",  # fixtures are injected and not always referenced
 ]
+# Live probes exist to report an observation to the person running them, and that report is
+# the output. Everywhere else in the suite, a print would be a leftover.
+"tests/live/**" = ["T201"]
 "scripts/**" = ["T20"] # scripts talk to a human on stdout
 # A CLI surface writes to stdout by definition. Everywhere else, output is structured logging.
 "src/agentgate/__main__.py" = ["T20"]
+"src/agentgate/models/catalogue.py" = ["T20"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -144,6 +148,9 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 minversion = "9.0"
 testpaths = ["tests"]
+# Puts the repo root on sys.path so `tests.doubles` imports as a package. The doubles are
+# shared across test modules and are library code, not fixtures local to one file.
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config -m 'not live'"
 asyncio_mode = "auto"
 markers = [

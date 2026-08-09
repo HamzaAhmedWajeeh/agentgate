@@ -10,16 +10,20 @@ Two rules shape the design:
 comes up on the ``fake`` lane with an in-memory checkpointer. Reaching a real provider is
 something you opt into, which is why the test suite needs no API key and CI needs no secrets.
 
-*A bad configuration stops the process at import, not at the first model call.* Settings are
-constructed and validated when this module loads, so a missing key or a nonsense budget fails
-in the first second of startup with a message that names the variable, rather than thirty
-seconds into a graph run with a provider stack trace.
+*A bad configuration stops the process at startup, not at the first model call.* Every entry
+point calls :func:`get_settings` as the first statement inside its handler, so a missing key
+or a nonsense budget fails in the first second with a message naming the variable, rather than
+thirty seconds into a graph run with a provider stack trace.
+
+Importing this module has no side effects and cannot raise. Validation used to run at import,
+which meant the import statement itself was the thing that failed -- a landmine every future
+entry point had to know to step around. See
+``docs/adr/0007-configuration-validated-at-startup.md``.
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from difflib import get_close_matches
 from enum import StrEnum
 from functools import lru_cache
@@ -29,6 +33,8 @@ from typing import Annotated, Any, Final
 from dotenv import dotenv_values
 from pydantic import (
     AliasChoices,
+    BaseModel,
+    ConfigDict,
     Field,
     SecretStr,
     ValidationError,
@@ -66,6 +72,35 @@ class Tier(StrEnum):
     CHEAP = "cheap"
 
 
+class CallClass(StrEnum):
+    """What a model call is for.
+
+    Output ceilings are set per class rather than globally. Classification and routing produce
+    a handful of tokens and are capped tightly; only final synthesis gets a generous budget.
+    A single global ``max_tokens`` would have to be sized for synthesis, which means every
+    cheap call would carry a synthesis-sized worst case.
+    """
+
+    ROUTING = "routing"
+    CLASSIFICATION = "classification"
+    RESEARCH = "research"
+    SYNTHESIS = "synthesis"
+    REPAIR = "repair"
+
+
+class ModelPrice(BaseModel):
+    """Price in USD per million tokens, input and output priced separately."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input: Annotated[float, Field(ge=0)]
+    output: Annotated[float, Field(ge=0)]
+
+    def cost_usd(self, input_tokens: int, output_tokens: int) -> float:
+        """Cost of one call, in USD."""
+        return (input_tokens * self.input + output_tokens * self.output) / 1_000_000
+
+
 class CheckpointerBackend(StrEnum):
     """Where thread state is persisted between super-steps."""
 
@@ -90,6 +125,24 @@ class VectorBackend(StrEnum):
 
     MEMORY = "memory"
     QDRANT = "qdrant"
+
+
+class TracingBackend(StrEnum):
+    """Where OpenTelemetry spans are exported.
+
+    The instrumentation never changes; only the exporter behind it does. The environments this
+    runtime targets treat prompt and document content as regulated data, so where traces land
+    is a deployment decision rather than a default. See ``docs/adr/0008``.
+    """
+
+    NONE = "none"
+    """Off. The process still logs structurally; nothing leaves it."""
+
+    LANGSMITH = "langsmith"
+    """Managed backend. Correct when the data is allowed to leave the boundary."""
+
+    OTLP = "otlp"
+    """Any OTLP collector, including one inside your own network. The self-hostable path."""
 
 
 class LogLevel(StrEnum):
@@ -124,7 +177,12 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="forbid",
+        # `.env` is a shared namespace. Other tools legitimately keep their own keys there,
+        # and rejecting them would make this application the owner of a file it merely reads.
+        # Typo protection for the AGENTGATE_ namespace comes from
+        # _reject_unrecognised_variables below, which is stricter than extra="forbid" was --
+        # it catches names the settings source silently drops, and suggests the intended one.
+        extra="ignore",
         frozen=True,
     )
 
@@ -143,6 +201,24 @@ class Settings(BaseSettings):
     temperature: UnitInterval = 0.0
     request_timeout_seconds: PositiveFloat = 30.0
     max_retries: Annotated[int, Field(ge=0, le=5)] = 2
+
+    # Output ceilings per call class. Tight where the answer is a label or a route, generous
+    # only where the answer is the deliverable.
+    max_tokens_routing: Positive = 128
+    max_tokens_classification: Positive = 256
+    max_tokens_research: Positive = 1_024
+    max_tokens_synthesis: Positive = 4_096
+    max_tokens_repair: Positive = 512
+
+    model_prices_usd_per_million: dict[str, ModelPrice] = Field(default_factory=dict)
+    """Per-model prices, keyed by model identifier.
+
+    Deliberately empty by default. Prices change, this repository cannot fetch them, and a
+    default of zero would silently disarm the spend guard -- an unpriced model would look
+    free and no ceiling would ever be crossed. An unpriced model on a networked lane is a
+    startup error instead. ``.env.example`` documents the format and where the numbers come
+    from.
+    """
 
     # ---------------------------------------------------------------- cloud lane
 
@@ -179,7 +255,21 @@ class Settings(BaseSettings):
     """Supervisor hand-offs allowed before the budget guard forces finalisation."""
 
     max_total_tokens: Positive = 120_000
+
     max_spend_usd: PositiveFloat = 0.50
+    """Hard ceiling for a single run. Crossing it aborts the graph; it is not a warning."""
+
+    max_session_spend_usd: PositiveFloat = 5.00
+    """Hard ceiling across every run in this process. Bounds a loop of cheap runs, which no
+    per-run ceiling can catch."""
+
+    live_spend_tolerance: Annotated[float, Field(gt=1.0, le=20.0)] = 3.0
+    """How far the live suite may exceed its pre-run estimate before aborting.
+
+    An estimate that is only advisory stops nothing. Must exceed 1.0, since an estimate is a
+    guess and a threshold at exactly the guess would abort on rounding.
+    """
+
     recursion_limit: Positive = 40
     """LangGraph's own super-step ceiling. A backstop behind ``max_iterations``, not a
     substitute for it: hitting this one is a bug, hitting the other one is a policy."""
@@ -209,8 +299,32 @@ class Settings(BaseSettings):
 
     # ---------------------------------------------------------------- observability
 
-    otel_enabled: bool = False
+    tracing_backend: TracingBackend = TracingBackend.NONE
+    """Where spans go. Off by default: see docs/adr/0008.
+
+    OpenTelemetry is the instrumentation in every case. This chooses only the exporter behind
+    it, which is why switching backends is a deployment decision and not a code change.
+    """
+
     otel_exporter_endpoint: str | None = None
+    """OTLP collector. Required when the backend is ``otlp``."""
+
+    langsmith_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(f"{ENV_PREFIX}LANGSMITH_API_KEY", "LANGSMITH_API_KEY"),
+    )
+    """Read from the conventional unprefixed name too, the same way the OpenAI key is.
+
+    Declared explicitly rather than left to chance: without an alias this field still picked
+    up an unprefixed value from a shared ``.env`` by accident, and a credential being read by
+    accident is exactly the kind of thing that should be written down.
+    """
+
+    langsmith_project: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(f"{ENV_PREFIX}LANGSMITH_PROJECT", "LANGSMITH_PROJECT"),
+    )
+
     metrics_enabled: bool = True
 
     # ---------------------------------------------------------------- validation
@@ -296,6 +410,57 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _every_reachable_model_has_a_price(self) -> Settings:
+        """A networked lane must be able to cost every model it can reach.
+
+        Without a price the spend guard cannot account, and the safe reading of "unknown
+        cost" is a refusal to start -- not an assumption of zero, which would leave the
+        ceiling permanently uncrossed while real money was spent.
+        """
+        if not self.requires_network:
+            return self
+        unpriced = sorted(
+            {
+                model
+                for model in (self.model_for(tier) for tier in Tier)
+                if model not in self.model_prices_usd_per_million
+            }
+        )
+        if unpriced:
+            msg = (
+                f"no price configured for {', '.join(unpriced)}; the spend guard cannot "
+                f"account for a model it cannot cost. Set {ENV_PREFIX}"
+                "MODEL_PRICES_USD_PER_MILLION (see .env.example)"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _tracing_backend_has_its_destination(self) -> Settings:
+        """A backend selected but not addressable would silently drop every span.
+
+        Worse than tracing being off, because the operator believes it is on.
+        """
+        if self.tracing_backend is TracingBackend.OTLP and not self.otel_exporter_endpoint:
+            msg = f"tracing_backend is 'otlp' but {ENV_PREFIX}OTEL_EXPORTER_ENDPOINT is not set"
+            raise ValueError(msg)
+        if self.tracing_backend is TracingBackend.LANGSMITH and not self.langsmith_api_key:
+            msg = f"tracing_backend is 'langsmith' but {ENV_PREFIX}LANGSMITH_API_KEY is not set"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _session_ceiling_is_not_below_the_run_ceiling(self) -> Settings:
+        if self.max_session_spend_usd < self.max_spend_usd:
+            msg = (
+                f"{ENV_PREFIX}MAX_SESSION_SPEND_USD ({self.max_session_spend_usd}) is below "
+                f"{ENV_PREFIX}MAX_SPEND_USD ({self.max_spend_usd}); the session ceiling bounds "
+                "every run together, so a single run could never reach its own limit"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
     def _budget_ceilings_are_ordered(self) -> Settings:
         if self.recursion_limit <= self.max_iterations:
             msg = (
@@ -312,6 +477,36 @@ class Settings(BaseSettings):
     def requires_network(self) -> bool:
         """Whether the configured lane reaches outside the process."""
         return self.lane is not Lane.FAKE
+
+    def max_tokens_for(self, call_class: CallClass) -> int:
+        """Output ceiling for a class of call."""
+        match call_class:
+            case CallClass.ROUTING:
+                return self.max_tokens_routing
+            case CallClass.CLASSIFICATION:
+                return self.max_tokens_classification
+            case CallClass.RESEARCH:
+                return self.max_tokens_research
+            case CallClass.SYNTHESIS:
+                return self.max_tokens_synthesis
+            case CallClass.REPAIR:
+                return self.max_tokens_repair
+
+    def price_for(self, model: str) -> ModelPrice:
+        """Price for a model identifier.
+
+        Raises:
+            ConfigurationError: if the model has no configured price. Validation makes this
+                unreachable at startup for a networked lane, so reaching it means a model was
+                selected at runtime that configuration never saw.
+        """
+        if self.lane is Lane.FAKE:
+            return ModelPrice(input=0.0, output=0.0)
+        try:
+            return self.model_prices_usd_per_million[model]
+        except KeyError:
+            msg = f"no price configured for model {model!r}; refusing to guess at spend"
+            raise ConfigurationError(msg) from None
 
     def model_for(self, tier: Tier) -> str:
         """Resolve the model identifier for a tier on the configured lane.
@@ -412,26 +607,20 @@ def _readable(error: ValidationError) -> str:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return the process-wide settings.
+    """Return the process-wide settings, validating them on the first call.
 
     Cached, so configuration is read once and every caller sees the same object. Tests that
     manipulate the environment must call ``get_settings.cache_clear()`` first.
+
+    **Every entry point must call this as the first statement inside its handler**, so a
+    broken environment stops the process at startup rather than at the first model call. It
+    is deliberately not called at import time -- see
+    ``docs/adr/0007-configuration-validated-at-startup.md``.
+
+    Raises:
+        ConfigurationError: with a message naming each variable at fault.
     """
     try:
         return Settings()
     except ValidationError as error:
         raise ConfigurationError(_readable(error)) from error
-
-
-def _fail_fast() -> None:
-    """Validate at import so a broken environment cannot reach a model call.
-
-    Skipped while the module is being imported by a documentation or completion tool, which
-    has no business crashing over an unset variable.
-    """
-    if "sphinx" in sys.modules:  # pragma: no cover - documentation build only
-        return
-    get_settings()
-
-
-_fail_fast()

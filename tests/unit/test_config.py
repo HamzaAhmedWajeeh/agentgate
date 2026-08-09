@@ -9,13 +9,21 @@ Three properties matter more than the rest and are asserted directly:
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from agentgate.config import (
+    ENV_PREFIX,
+    CallClass,
     CheckpointerBackend,
     ConfigurationError,
     Lane,
+    ModelPrice,
     Settings,
     StoreBackend,
     Tier,
@@ -29,6 +37,15 @@ pytestmark = pytest.mark.usefixtures("isolated_env")
 def build(**overrides: object) -> Settings:
     """Construct settings from explicit values only, ignoring any ``.env`` on disk."""
     return Settings(_env_file=None, **overrides)  # type: ignore[call-arg]
+
+
+def priced(*models: str) -> dict[str, dict[str, float]]:
+    """A price entry per model, so a networked lane passes the spend-guard precondition.
+
+    The numbers are arbitrary; what matters is that a price exists. Identifiers are
+    invented here on purpose -- no real model name belongs in a test.
+    """
+    return {model: {"input": 0.10, "output": 0.40} for model in models}
 
 
 # --------------------------------------------------------------------------- safe defaults
@@ -82,6 +99,7 @@ def test_cloud_lane_with_complete_configuration_resolves_both_tiers() -> None:
         openai_api_key="sk-test",
         cloud_capable_model="a-capable-model",
         cloud_cheap_model="a-cheap-model",
+        model_prices_usd_per_million=priced("a-capable-model", "a-cheap-model"),
     )
 
     assert settings.requires_network is True
@@ -114,6 +132,7 @@ def test_sovereign_lane_needs_no_api_key() -> None:
         lane="sovereign",
         sovereign_base_url="http://localhost:11434/v1",
         sovereign_model="a-local-model",
+        model_prices_usd_per_million=priced("a-local-model"),
     )
 
     assert settings.model_for(Tier.CAPABLE) == "a-local-model"
@@ -134,6 +153,7 @@ def test_trailing_slash_is_normalised_away() -> None:
         lane="sovereign",
         sovereign_base_url="http://localhost:11434/v1/",
         sovereign_model="m",
+        model_prices_usd_per_million=priced("m"),
     )
 
     assert settings.sovereign_base_url == "http://localhost:11434/v1"
@@ -203,6 +223,89 @@ def test_equal_limits_are_rejected_because_the_guard_would_never_win() -> None:
         build(max_iterations=20, recursion_limit=20)
 
 
+# --------------------------------------------------------------------------- cost
+
+
+def test_output_ceilings_are_tight_where_the_answer_is_a_label() -> None:
+    """A single global cap would have to be sized for synthesis.
+
+    Every cheap call would then carry a synthesis-sized worst case, which is how a routing
+    decision ends up costing as much as the deliverable.
+    """
+    settings = build()
+
+    assert settings.max_tokens_for(CallClass.ROUTING) < settings.max_tokens_for(
+        CallClass.CLASSIFICATION
+    )
+    assert settings.max_tokens_for(CallClass.CLASSIFICATION) < settings.max_tokens_for(
+        CallClass.RESEARCH
+    )
+    assert settings.max_tokens_for(CallClass.RESEARCH) < settings.max_tokens_for(
+        CallClass.SYNTHESIS
+    )
+
+
+def test_every_call_class_has_a_ceiling() -> None:
+    """An unmapped class would fall through to a provider default, which is unbounded."""
+    settings = build()
+
+    for call_class in CallClass:
+        assert settings.max_tokens_for(call_class) > 0
+
+
+def test_a_networked_lane_without_prices_will_not_start() -> None:
+    """An unpriced model looks free, so the ceiling is never crossed while money is spent.
+
+    Refusing to start is the safe reading of "unknown cost".
+    """
+    with pytest.raises(ValidationError, match="no price configured"):
+        build(
+            lane="sovereign",
+            sovereign_base_url="http://localhost:9/v1",
+            sovereign_model="an-unpriced-model",
+        )
+
+
+def test_the_fake_lane_needs_no_prices_because_it_is_free() -> None:
+    settings = build()
+
+    price = settings.price_for(settings.model_for(Tier.CHEAP))
+
+    assert price.cost_usd(1_000_000, 1_000_000) == 0.0
+
+
+def test_price_is_charged_per_million_tokens_split_by_direction() -> None:
+    price = ModelPrice(input=0.50, output=2.00)
+
+    assert price.cost_usd(1_000_000, 0) == pytest.approx(0.50)
+    assert price.cost_usd(0, 1_000_000) == pytest.approx(2.00)
+    assert price.cost_usd(500_000, 250_000) == pytest.approx(0.25 + 0.50)
+
+
+def test_pricing_an_unknown_model_refuses_rather_than_guessing() -> None:
+    settings = build(
+        lane="cloud",
+        openai_api_key="sk-test",
+        cloud_capable_model="a",
+        cloud_cheap_model="b",
+        model_prices_usd_per_million=priced("a", "b"),
+    )
+
+    with pytest.raises(ConfigurationError, match="refusing to guess"):
+        settings.price_for("a-model-configuration-never-saw")
+
+
+def test_session_ceiling_below_the_run_ceiling_is_rejected() -> None:
+    """Otherwise a single run could never reach its own limit before the session one bit."""
+    with pytest.raises(ValidationError, match="session ceiling"):
+        build(max_spend_usd=10.0, max_session_spend_usd=1.0)
+
+
+def test_session_ceiling_may_equal_the_run_ceiling() -> None:
+    """A single-run session is a legitimate configuration, not an error."""
+    assert build(max_spend_usd=1.0, max_session_spend_usd=1.0).max_session_spend_usd == 1.0
+
+
 # --------------------------------------------------------------------------- typos
 
 
@@ -226,6 +329,52 @@ def test_unknown_lane_is_rejected(value: str) -> None:
         build(lane=value)
 
 
+def test_another_tool_s_variables_in_a_shared_env_file_are_tolerated(
+    tmp_path: Path,
+) -> None:
+    """`.env` belongs to the project, not to this application.
+
+    Rejecting keys other tools keep there would make this config the owner of a file it
+    merely reads -- and it really happened: an unprefixed LANGSMITH_* block from a developer's
+    own `.env` stopped the process from starting.
+    """
+    env_file = tmp_path / "shared.env"
+    env_file.write_text(
+        "SOME_OTHER_TOOL_SETTING=1\nRAILS_ENV=production\nAGENTGATE_MAX_ITERATIONS=3\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)  # type: ignore[call-arg]
+
+    assert settings.max_iterations == 3
+
+
+def test_tolerance_does_not_extend_to_the_agentgate_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ignoring a foreign key is courtesy. Ignoring a misspelled own key is a silent default."""
+    monkeypatch.setenv("AGENTGATE_MAX_ITERATION", "3")
+
+    with pytest.raises(ValidationError, match="AGENTGATE_MAX_ITERATIONS"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_the_langsmith_key_is_read_from_its_conventional_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declared as an alias rather than left to happen by accident.
+
+    Without the alias this field still picked the value up from a shared `.env`, and a
+    credential being read by accident is worth making explicit.
+    """
+    monkeypatch.setenv("LANGSMITH_API_KEY", "lsv2-from-the-shell")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.langsmith_api_key is not None
+    assert settings.langsmith_api_key.get_secret_value() == "lsv2-from-the-shell"
+
+
 # --------------------------------------------------------------------------- secrets
 
 
@@ -236,6 +385,7 @@ def test_secrets_do_not_render_in_repr_or_str() -> None:
         cloud_capable_model="a",
         cloud_cheap_model="b",
         postgres_dsn="postgresql://user:hunter2@db/agentgate",
+        model_prices_usd_per_million=priced("a", "b"),
     )
 
     for rendered in (repr(settings), str(settings), settings.model_dump_json()):
@@ -249,6 +399,7 @@ def test_the_secret_is_still_retrievable_deliberately() -> None:
         openai_api_key="sk-do-not-leak-me",
         cloud_capable_model="a",
         cloud_cheap_model="b",
+        model_prices_usd_per_million=priced("a", "b"),
     )
 
     assert settings.openai_api_key is not None
@@ -282,6 +433,31 @@ def test_get_settings_reflects_the_environment_after_a_cache_clear(
     get_settings.cache_clear()
 
     assert get_settings().max_iterations == 3
+
+
+def test_importing_the_module_has_no_side_effects(tmp_path: Path) -> None:
+    """Importing must not raise, however broken the environment is.
+
+    Validation used to run at import, which made the import statement itself the thing that
+    failed -- a landmine every future entry point had to know to step around, and one that
+    already produced a wrong exit code once. A cold subprocess is the only way to observe
+    this; by the time an in-process test runs, the module is already in sys.modules.
+    """
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(ENV_PREFIX)}
+    clean.pop("OPENAI_API_KEY", None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import agentgate.config"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={**clean, "AGENTGATE_LANE": "cloud"},  # cloud with no key: definitely invalid
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
 
 
 def test_get_settings_raises_an_operator_readable_error(

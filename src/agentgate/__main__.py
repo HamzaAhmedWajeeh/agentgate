@@ -13,6 +13,7 @@ import sys
 from collections.abc import Sequence
 from typing import Final
 
+from agentgate.config import get_settings
 from agentgate.errors import ConfigurationError
 
 EXIT_OK: Final = 0
@@ -31,12 +32,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_BAD_CONFIG
 
     try:
-        # Imported here, not at module scope: agentgate.config validates at import, so the
-        # import statement is the operation that fails on a bad environment. At module scope
-        # that failure escapes as a traceback before this handler exists -- which is exactly
-        # what it did, until a container run showed exit 1 where the tests claimed 2.
-        from agentgate.config import get_settings  # noqa: PLC0415 - deliberate, see above
-
+        # First statement inside the handler, by convention across every entry point. This is
+        # where configuration is validated, so a broken environment produces the operator
+        # message below rather than a traceback from somewhere deeper.
         settings = get_settings()
     except ConfigurationError as error:
         print(str(error), file=sys.stderr)

@@ -1,5 +1,9 @@
 # agentgate
 
+[![CI](https://github.com/HamzaAhmedWajeeh/agentgate/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HamzaAhmedWajeeh/agentgate/actions/workflows/ci.yml)
+[![Python 3.12 | 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > Every agent action passes a gate. A policy gate decides which model tier may see the data.
 > Budget gates cap iterations, tokens, and spend. A human gate approves anything irreversible.
 > All three write to an append-only audit trail.
@@ -27,7 +31,22 @@ arrives with the graph it describes rather than before it.
 - `python -m agentgate` prints the resolved configuration with every secret masked.
 - Toolchain: ruff, mypy in strict mode, pytest, pre-commit, and CI running all of it.
 
-**Not built yet:** the graph, the model lanes, retrieval, the gates, and every surface.
+- Three model lanes behind one interface, with a capability matrix in which every entry records
+  how it was learned and when. The suite fails if any entry about a networked lane rests on
+  assumption rather than measurement.
+- Structured output with a validate-and-repair fallback, proven against a committed
+  OpenAI-compatible stub server that returns prose-wrapped JSON the way self-hosted endpoints
+  actually do.
+- `make models` lists the model identifiers a key can reach. It cannot tell you what they cost,
+  and says so: that API exposes no pricing, and no price is ever inferred from a name.
+
+**Not built yet:** the graph, retrieval, the gates, observability, and every surface.
+
+**Deferred verification.** The sovereign lane is exercised against the committed stub server
+over real HTTP. Ollama and vLLM are the intended targets and neither has been run against yet,
+so neither is claimed. The same applies to observability: LangSmith is to be verified against a
+free-tier account and OTLP against a collector in the Compose stack, and until each has
+actually run, neither is claimed either.
 
 ## Quickstart
 
@@ -96,6 +115,14 @@ read in an afternoon. Lift the patterns; do not depend on the package.
 
 **It does not make the model trustworthy.** Every gate here constrains what an untrustworthy
 model is *permitted to do*. None of them make its output correct.
+
+**It does not pick an observability backend for you.** OpenTelemetry is the instrumentation and
+the trace backend is deliberately a deployment decision, because a system that keeps a
+restricted document away from a cloud model and then ships it to a managed trace backend has
+only moved the leak somewhere less visible. Tracing is off by default. See
+[ADR 0008](docs/adr/0008-tracing-backend-is-a-deployment-decision.md).
+
+**It does not deploy to Kubernetes.** Docker Compose is the deployment story here, on purpose.
 
 ## Development
 

@@ -32,4 +32,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: ruff, ruff-format, mypy, pytest on Python 3.12 and 3.13, `pip-audit`,
   and a Docker build that asserts the image runs non-root. Fake lane throughout, no secrets.
 
+- Deterministic fake lane (`agentgate.models.fake`) with scriptable replies, scriptable
+  failures, and honest `usage_metadata`. The whole suite and all of CI run on it.
+- Cost controls in config: per-call-class output ceilings, per-run and per-session spend
+  ceilings, and a per-model price table. A networked lane with an unpriced model refuses to
+  start rather than treating unknown cost as zero.
+
+- Lane registry and capability matrix. Every entry records how it was learned (live probe,
+  stub, in-process, or operator declaration) and when; the suite fails if any entry on a
+  networked lane rests on assumption. An unmeasured capability reads as unsupported.
+- Structured output with a validate-and-repair fallback for lanes lacking native support,
+  proven against a committed OpenAI-compatible stub that returns prose-wrapped JSON.
+- `make models` lists the identifiers a key can reach and emits a zeroed, paste-ready price
+  table. It states plainly that the API exposes no pricing, and infers nothing from a name.
+
+- Tracing configuration: `AGENTGATE_TRACING_BACKEND` selects `none` (default), `langsmith`,
+  or `otlp`. OpenTelemetry is the instrumentation in every case; the backend is only the
+  exporter behind it. Off by default, and a backend selected without its destination is a
+  startup error. Design recorded in ADR 0008; implementation lands in Phase 8.
+
+- Spend ledger with per-run and per-session ceilings, accounting from `usage_metadata`. A
+  reply without usage is an error rather than a free call.
+- `make test-live` estimates the cost, asks for confirmation, and aborts if actual spend
+  exceeds the estimate by more than a configurable factor. Five live cases, deselected by
+  default and never run in CI.
+- `docs/concept-map.md`, maintained as the build proceeds, and ADR 0004 carrying the leak
+  inventory: what is known to differ between lanes and how each difference was established.
+
+### Changed
+
+- Configuration tolerates unrelated keys in a shared `.env` rather than rejecting them.
+  Typo protection for the `AGENTGATE_` namespace is unchanged and remains stricter than
+  `extra="forbid"` ever was. Every unprefixed environment name the application reads is now
+  declared explicitly and pinned by a test that asserts no field consumes an undeclared one.
+  See ADR 0009.
+- Configuration is validated on an explicit `get_settings()` call at each entry point
+  rather than as a side effect of importing `agentgate.config`. The startup guarantee is
+  unchanged; importing the module now has no side effects and cannot raise. See ADR 0007.
+
 [Unreleased]: https://github.com/HamzaAhmedWajeeh/agentgate/commits/main/

@@ -42,8 +42,8 @@ $targets = [ordered]@{
         Steps = @(, @('uv', 'run', 'pytest')) }
     'test-cov'     = @{ Help = 'Run the offline suite with a coverage report'
         Steps = @(, @('uv', 'run', 'pytest', '--cov', '--cov-report=term-missing')) }
-    'test-live'    = @{ Help = 'Run the suite against real providers. Costs money.'
-        Steps = @(, @('uv', 'run', 'pytest', '-m', 'live')) }
+    'test-live'    = @{ Help = 'Run the suite against real providers. Estimates, confirms, then enforces.'
+        Steps = @(, @('uv', 'run', 'python', 'scripts/run_live.py')) }
     'check'        = @{ Help = 'Everything CI runs'; DependsOn = @('lint', 'format-check', 'typecheck', 'test') }
     # Audits the exported lockfile, not the environment: agentgate itself is not on PyPI and
     # --strict treats an unauditable distribution as a failure.
@@ -52,6 +52,8 @@ $targets = [ordered]@{
             @('uv', 'export', '--all-groups', '--no-emit-project', '--no-hashes',
                 '--format', 'requirements-txt', '-o', '.audit-requirements.txt', '--quiet'),
             @('uv', 'run', 'pip-audit', '--strict', '-r', '.audit-requirements.txt')) }
+    'models'       = @{ Help = 'List model identifiers this key can reach, with a price-table skeleton'
+        Steps = @(, @('uv', 'run', 'python', '-m', 'agentgate.models.catalogue')) }
     'config'       = @{ Help = 'Print the resolved configuration, secrets redacted'
         Steps = @(, @('uv', 'run', 'python', '-m', 'agentgate')) }
     'docker-build' = @{ Help = 'Build the container image'
