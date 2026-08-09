@@ -38,8 +38,8 @@ test: ## Run the offline suite (no API key required)
 test-cov: ## Run the offline suite with a coverage report
 	$(RUN) pytest --cov --cov-report=term-missing
 
-test-live: ## Run the suite against real providers. Costs money.
-	$(RUN) pytest -m live
+test-live: ## Run the suite against real providers. Estimates, confirms, then enforces.
+	$(RUN) python scripts/run_live.py
 
 check: lint format-check typecheck test ## Everything CI runs
 
