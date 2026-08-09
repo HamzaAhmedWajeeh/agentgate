@@ -54,6 +54,8 @@ $targets = [ordered]@{
             @('uv', 'run', 'pip-audit', '--strict', '-r', '.audit-requirements.txt')) }
     'models'       = @{ Help = 'List model identifiers this key can reach, with a price-table skeleton'
         Steps = @(, @('uv', 'run', 'python', '-m', 'agentgate.models.catalogue')) }
+    'measure'      = @{ Help = 'Measure what one full run consumes, to derive the token ceiling'
+        Steps = @(, @('uv', 'run', 'python', 'scripts/measure_run.py')) }
     'config'       = @{ Help = 'Print the resolved configuration, secrets redacted'
         Steps = @(, @('uv', 'run', 'python', '-m', 'agentgate')) }
     'docker-build' = @{ Help = 'Build the container image'

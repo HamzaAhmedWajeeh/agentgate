@@ -59,6 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/concept-map.md`, maintained as the build proceeds, and ADR 0004 carrying the leak
   inventory: what is known to differ between lanes and how each difference was established.
 
+- Typed graph state with reducers on the channels that fan out, and deliberately without one
+  on the channels a single node writes.
+- The core graph: classify, a policy gate as a conditional edge returning a `Literal`, lane
+  binding, a supervisor returning `Command`, a budget guard, and finalisation. Checkpointer
+  chosen by configuration across in-memory, SQLite, and Postgres.
+- Append-only audit events recording what decided, what it decided, and on what input hash --
+  never on the input itself.
+- `make measure` derives the token ceiling from an instrumented run; the spend ceilings follow
+  from that budget priced at the configured table. Both bases are recorded in `.env.example`.
+
 ### Changed
 
 - Configuration tolerates unrelated keys in a shared `.env` rather than rejecting them.

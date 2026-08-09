@@ -10,7 +10,7 @@ RUN := $(UV) run
 AUDIT_REQUIREMENTS := .audit-requirements.txt
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format format-check typecheck test test-cov test-live check audit models config docker-build docker-up docker-down docker-logs clean
+.PHONY: help setup lint format format-check typecheck test test-cov test-live check audit models measure config docker-build docker-up docker-down docker-logs clean
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) \
@@ -50,6 +50,9 @@ audit: ## Check locked dependencies for known vulnerabilities
 
 models: ## List model identifiers this key can reach, with a price-table skeleton
 	$(RUN) python -m agentgate.models.catalogue
+
+measure: ## Measure what one full run consumes, to derive the token ceiling
+	$(RUN) python scripts/measure_run.py
 
 config: ## Print the resolved configuration, secrets redacted
 	$(RUN) python -m agentgate
