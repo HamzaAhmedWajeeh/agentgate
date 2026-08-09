@@ -84,6 +84,10 @@ def test_secrets_are_masked_in_the_dump(
     monkeypatch.setenv("AGENTGATE_CLOUD_CAPABLE_MODEL", "a")
     monkeypatch.setenv("AGENTGATE_CLOUD_CHEAP_MODEL", "b")
     monkeypatch.setenv("AGENTGATE_POSTGRES_DSN", "postgresql://u:hunter2@db/agentgate")
+    monkeypatch.setenv(
+        "AGENTGATE_MODEL_PRICES_USD_PER_MILLION",
+        '{"a": {"input": 0.1, "output": 0.4}, "b": {"input": 0.1, "output": 0.4}}',
+    )
 
     code = main([])
 
