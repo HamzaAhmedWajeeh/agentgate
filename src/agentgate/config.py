@@ -10,16 +10,20 @@ Two rules shape the design:
 comes up on the ``fake`` lane with an in-memory checkpointer. Reaching a real provider is
 something you opt into, which is why the test suite needs no API key and CI needs no secrets.
 
-*A bad configuration stops the process at import, not at the first model call.* Settings are
-constructed and validated when this module loads, so a missing key or a nonsense budget fails
-in the first second of startup with a message that names the variable, rather than thirty
-seconds into a graph run with a provider stack trace.
+*A bad configuration stops the process at startup, not at the first model call.* Every entry
+point calls :func:`get_settings` as the first statement inside its handler, so a missing key
+or a nonsense budget fails in the first second with a message naming the variable, rather than
+thirty seconds into a graph run with a provider stack trace.
+
+Importing this module has no side effects and cannot raise. Validation used to run at import,
+which meant the import statement itself was the thing that failed -- a landmine every future
+entry point had to know to step around. See
+``docs/adr/0007-configuration-validated-at-startup.md``.
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from difflib import get_close_matches
 from enum import StrEnum
 from functools import lru_cache
@@ -412,26 +416,20 @@ def _readable(error: ValidationError) -> str:
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return the process-wide settings.
+    """Return the process-wide settings, validating them on the first call.
 
     Cached, so configuration is read once and every caller sees the same object. Tests that
     manipulate the environment must call ``get_settings.cache_clear()`` first.
+
+    **Every entry point must call this as the first statement inside its handler**, so a
+    broken environment stops the process at startup rather than at the first model call. It
+    is deliberately not called at import time -- see
+    ``docs/adr/0007-configuration-validated-at-startup.md``.
+
+    Raises:
+        ConfigurationError: with a message naming each variable at fault.
     """
     try:
         return Settings()
     except ValidationError as error:
         raise ConfigurationError(_readable(error)) from error
-
-
-def _fail_fast() -> None:
-    """Validate at import so a broken environment cannot reach a model call.
-
-    Skipped while the module is being imported by a documentation or completion tool, which
-    has no business crashing over an unset variable.
-    """
-    if "sphinx" in sys.modules:  # pragma: no cover - documentation build only
-        return
-    get_settings()
-
-
-_fail_fast()

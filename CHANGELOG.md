@@ -32,4 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI: ruff, ruff-format, mypy, pytest on Python 3.12 and 3.13, `pip-audit`,
   and a Docker build that asserts the image runs non-root. Fake lane throughout, no secrets.
 
+### Changed
+
+- Configuration is validated on an explicit `get_settings()` call at each entry point
+  rather than as a side effect of importing `agentgate.config`. The startup guarantee is
+  unchanged; importing the module now has no side effects and cannot raise. See ADR 0007.
+
 [Unreleased]: https://github.com/HamzaAhmedWajeeh/agentgate/commits/main/
