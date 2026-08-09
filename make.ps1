@@ -45,8 +45,13 @@ $targets = [ordered]@{
     'test-live'    = @{ Help = 'Run the suite against real providers. Costs money.'
         Steps = @(, @('uv', 'run', 'pytest', '-m', 'live')) }
     'check'        = @{ Help = 'Everything CI runs'; DependsOn = @('lint', 'format-check', 'typecheck', 'test') }
-    'audit'        = @{ Help = 'Check installed dependencies for known vulnerabilities'
-        Steps = @(, @('uv', 'run', 'pip-audit')) }
+    # Audits the exported lockfile, not the environment: agentgate itself is not on PyPI and
+    # --strict treats an unauditable distribution as a failure.
+    'audit'        = @{ Help = 'Check locked dependencies for known vulnerabilities'
+        Steps = @(
+            @('uv', 'export', '--all-groups', '--no-emit-project', '--no-hashes',
+                '--format', 'requirements-txt', '-o', '.audit-requirements.txt', '--quiet'),
+            @('uv', 'run', 'pip-audit', '--strict', '-r', '.audit-requirements.txt')) }
     'config'       = @{ Help = 'Print the resolved configuration, secrets redacted'
         Steps = @(, @('uv', 'run', 'python', '-m', 'agentgate')) }
     'docker-build' = @{ Help = 'Build the container image'

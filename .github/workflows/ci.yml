@@ -80,7 +80,13 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --all-groups
-      - run: uv run pip-audit --strict
+      - name: Export the locked dependency set
+        # Auditing the environment would audit agentgate itself, which is not on PyPI, and
+        # --strict treats an unauditable distribution as a failure.
+        run: >-
+          uv export --all-groups --no-emit-project --no-hashes
+          --format requirements-txt -o .audit-requirements.txt --quiet
+      - run: uv run pip-audit --strict -r .audit-requirements.txt
 
   docker:
     name: Docker build
