@@ -23,5 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offline and free -- the `fake` lane with an in-memory checkpointer -- so reaching a real
   provider is opt-in. Unrecognised `AGENTGATE_*` variables are rejected with a spelling
   suggestion rather than silently ignored.
+- `python -m agentgate` prints the resolved configuration as JSON with every secret masked,
+  exiting non-zero when the environment does not describe a runnable system.
 
 [Unreleased]: https://github.com/HamzaAhmedWajeeh/agentgate/commits/main/

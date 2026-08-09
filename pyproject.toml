@@ -126,6 +126,8 @@ ignore = [
     "ARG001",  # fixtures are injected and not always referenced
 ]
 "scripts/**" = ["T20"] # scripts talk to a human on stdout
+# A CLI surface writes to stdout by definition. Everywhere else, output is structured logging.
+"src/agentgate/__main__.py" = ["T20"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
