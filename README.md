@@ -1,5 +1,9 @@
 # agentgate
 
+[![CI](https://github.com/HamzaAhmedWajeeh/agentgate/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HamzaAhmedWajeeh/agentgate/actions/workflows/ci.yml)
+[![Python 3.12 | 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > Every agent action passes a gate. A policy gate decides which model tier may see the data.
 > Budget gates cap iterations, tokens, and spend. A human gate approves anything irreversible.
 > All three write to an append-only audit trail.
