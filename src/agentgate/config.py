@@ -37,15 +37,14 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from agentgate.errors import ConfigurationError
+
 ENV_PREFIX: Final = "AGENTGATE_"
 
-
-class ConfigurationError(RuntimeError):
-    """The environment does not describe a runnable configuration.
-
-    Raised instead of letting :class:`pydantic.ValidationError` surface, because the operator
-    reading this message is holding a ``.env`` file, not a stack trace.
-    """
+# Re-exported so callers can keep importing it from here, but it is *defined* in
+# agentgate.errors: importing this module is itself the thing that can fail, and an entry
+# point cannot catch that using a class it imports from this module.
+__all__ = ["ENV_PREFIX", "ConfigurationError", "Settings", "get_settings"]
 
 
 class Lane(StrEnum):
