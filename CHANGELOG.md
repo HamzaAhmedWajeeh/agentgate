@@ -46,8 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make models` lists the identifiers a key can reach and emits a zeroed, paste-ready price
   table. It states plainly that the API exposes no pricing, and infers nothing from a name.
 
+- Tracing configuration: `AGENTGATE_TRACING_BACKEND` selects `none` (default), `langsmith`,
+  or `otlp`. OpenTelemetry is the instrumentation in every case; the backend is only the
+  exporter behind it. Off by default, and a backend selected without its destination is a
+  startup error. Design recorded in ADR 0008; implementation lands in Phase 8.
+
 ### Changed
 
+- Configuration tolerates unrelated keys in a shared `.env` rather than rejecting them.
+  Typo protection for the `AGENTGATE_` namespace is unchanged and remains stricter than
+  `extra="forbid"` ever was.
 - Configuration is validated on an explicit `get_settings()` call at each entry point
   rather than as a side effect of importing `agentgate.config`. The startup guarantee is
   unchanged; importing the module now has no side effects and cannot raise. See ADR 0007.

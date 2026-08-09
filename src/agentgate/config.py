@@ -127,6 +127,24 @@ class VectorBackend(StrEnum):
     QDRANT = "qdrant"
 
 
+class TracingBackend(StrEnum):
+    """Where OpenTelemetry spans are exported.
+
+    The instrumentation never changes; only the exporter behind it does. The environments this
+    runtime targets treat prompt and document content as regulated data, so where traces land
+    is a deployment decision rather than a default. See ``docs/adr/0008``.
+    """
+
+    NONE = "none"
+    """Off. The process still logs structurally; nothing leaves it."""
+
+    LANGSMITH = "langsmith"
+    """Managed backend. Correct when the data is allowed to leave the boundary."""
+
+    OTLP = "otlp"
+    """Any OTLP collector, including one inside your own network. The self-hostable path."""
+
+
 class LogLevel(StrEnum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -159,7 +177,12 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="forbid",
+        # `.env` is a shared namespace. Other tools legitimately keep their own keys there,
+        # and rejecting them would make this application the owner of a file it merely reads.
+        # Typo protection for the AGENTGATE_ namespace comes from
+        # _reject_unrecognised_variables below, which is stricter than extra="forbid" was --
+        # it catches names the settings source silently drops, and suggests the intended one.
+        extra="ignore",
         frozen=True,
     )
 
@@ -269,8 +292,32 @@ class Settings(BaseSettings):
 
     # ---------------------------------------------------------------- observability
 
-    otel_enabled: bool = False
+    tracing_backend: TracingBackend = TracingBackend.NONE
+    """Where spans go. Off by default: see docs/adr/0008.
+
+    OpenTelemetry is the instrumentation in every case. This chooses only the exporter behind
+    it, which is why switching backends is a deployment decision and not a code change.
+    """
+
     otel_exporter_endpoint: str | None = None
+    """OTLP collector. Required when the backend is ``otlp``."""
+
+    langsmith_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(f"{ENV_PREFIX}LANGSMITH_API_KEY", "LANGSMITH_API_KEY"),
+    )
+    """Read from the conventional unprefixed name too, the same way the OpenAI key is.
+
+    Declared explicitly rather than left to chance: without an alias this field still picked
+    up an unprefixed value from a shared ``.env`` by accident, and a credential being read by
+    accident is exactly the kind of thing that should be written down.
+    """
+
+    langsmith_project: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(f"{ENV_PREFIX}LANGSMITH_PROJECT", "LANGSMITH_PROJECT"),
+    )
+
     metrics_enabled: bool = True
 
     # ---------------------------------------------------------------- validation
@@ -378,6 +425,20 @@ class Settings(BaseSettings):
                 f"account for a model it cannot cost. Set {ENV_PREFIX}"
                 "MODEL_PRICES_USD_PER_MILLION (see .env.example)"
             )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _tracing_backend_has_its_destination(self) -> Settings:
+        """A backend selected but not addressable would silently drop every span.
+
+        Worse than tracing being off, because the operator believes it is on.
+        """
+        if self.tracing_backend is TracingBackend.OTLP and not self.otel_exporter_endpoint:
+            msg = f"tracing_backend is 'otlp' but {ENV_PREFIX}OTEL_EXPORTER_ENDPOINT is not set"
+            raise ValueError(msg)
+        if self.tracing_backend is TracingBackend.LANGSMITH and not self.langsmith_api_key:
+            msg = f"tracing_backend is 'langsmith' but {ENV_PREFIX}LANGSMITH_API_KEY is not set"
             raise ValueError(msg)
         return self
 

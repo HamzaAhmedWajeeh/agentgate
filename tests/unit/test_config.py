@@ -329,6 +329,52 @@ def test_unknown_lane_is_rejected(value: str) -> None:
         build(lane=value)
 
 
+def test_another_tool_s_variables_in_a_shared_env_file_are_tolerated(
+    tmp_path: Path,
+) -> None:
+    """`.env` belongs to the project, not to this application.
+
+    Rejecting keys other tools keep there would make this config the owner of a file it
+    merely reads -- and it really happened: an unprefixed LANGSMITH_* block from a developer's
+    own `.env` stopped the process from starting.
+    """
+    env_file = tmp_path / "shared.env"
+    env_file.write_text(
+        "SOME_OTHER_TOOL_SETTING=1\nRAILS_ENV=production\nAGENTGATE_MAX_ITERATIONS=3\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)  # type: ignore[call-arg]
+
+    assert settings.max_iterations == 3
+
+
+def test_tolerance_does_not_extend_to_the_agentgate_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ignoring a foreign key is courtesy. Ignoring a misspelled own key is a silent default."""
+    monkeypatch.setenv("AGENTGATE_MAX_ITERATION", "3")
+
+    with pytest.raises(ValidationError, match="AGENTGATE_MAX_ITERATIONS"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_the_langsmith_key_is_read_from_its_conventional_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declared as an alias rather than left to happen by accident.
+
+    Without the alias this field still picked the value up from a shared `.env`, and a
+    credential being read by accident is worth making explicit.
+    """
+    monkeypatch.setenv("LANGSMITH_API_KEY", "lsv2-from-the-shell")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.langsmith_api_key is not None
+    assert settings.langsmith_api_key.get_secret_value() == "lsv2-from-the-shell"
+
+
 # --------------------------------------------------------------------------- secrets
 
 
