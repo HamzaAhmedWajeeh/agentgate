@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 from langchain_core.documents import Document
+from langgraph.types import Command
 
 from agentgate.config import Settings
 from agentgate.graph.build import build_checkpointer, build_graph
@@ -90,24 +91,29 @@ class OneBranchFails:
 
 
 def run_graph(settings: Settings, questions: list[str], retriever: Any) -> dict[str, Any]:
-    """Drive one full run with a supplied retriever, and hand back the final state."""
+    """Drive one full run with a supplied retriever, and hand back the final state.
+
+    Approves at the gate. These tests are about the fan-out, not about the human decision, and
+    since Phase 5 a run does not reach ``finalise`` without one -- so approving is what "run it
+    to completion" now means.
+    """
     graph = build_graph(
         settings,
         build_checkpointer(settings),
         model_factory=model_factory,
         retriever_factory=lambda _settings: retriever,
     )
+    config = {
+        "configurable": {"thread_id": str(uuid.uuid4())},
+        "recursion_limit": settings.recursion_limit,
+    }
     state = initial_state("Compare the refund policy against complaints", str(uuid.uuid4()))
     state["sub_questions"] = questions
-    return dict(
-        graph.invoke(
-            state,
-            {
-                "configurable": {"thread_id": str(uuid.uuid4())},
-                "recursion_limit": settings.recursion_limit,
-            },
-        )
-    )
+
+    result = dict(graph.invoke(state, config))
+    if "__interrupt__" in result:
+        result = dict(graph.invoke(Command(resume={"decision": "approved"}), config))
+    return result
 
 
 def decided(state: dict[str, Any], kind: str) -> list[dict[str, Any]]:
@@ -264,8 +270,9 @@ def test_the_fan_in_costs_one_supervisor_turn_no_matter_how_wide() -> None:
     scheduling rather than of anything in this repository, and an upgrade could change it
     without any of our code moving.
 
-    Three turns, and the count is the point only insofar as it is the *same* three: dispatch
-    research, decide to draft, finish. None of them is "another branch came back".
+    Four turns, and the count is the point only insofar as it is the *same* four: dispatch
+    research, decide to draft, send it to the gate, finish. None of them is "another branch
+    came back".
     """
     settings = settings_with()
     retriever = OneBranchFails(settings, poisoned="nothing matches")
@@ -273,4 +280,4 @@ def test_the_fan_in_costs_one_supervisor_turn_no_matter_how_wide() -> None:
     narrow = run_graph(settings, QUESTIONS[:1], retriever)
     wide = run_graph(settings, QUESTIONS, retriever)
 
-    assert narrow["iterations"] == wide["iterations"] == 3
+    assert narrow["iterations"] == wide["iterations"] == 4

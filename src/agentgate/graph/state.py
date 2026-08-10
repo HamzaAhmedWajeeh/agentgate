@@ -182,6 +182,13 @@ class AgentState(TypedDict, total=False):
     feedback: str
     """Reviewer's reason for rejection, fed back into the revision loop."""
 
+    revisions: int
+    """How many times the approval gate has sent the draft back.
+
+    Single-writer, by the gate. Distinct from ``iterations``: a reviewer who rejects five times
+    has driven five revisions and rather more hand-offs, and an audit reader asking "how many
+    times did a person say no" should not have to infer it from a turn count."""
+
     iterations: int
     """Supervisor hand-offs so far. Compared against the budget in a conditional edge.
 

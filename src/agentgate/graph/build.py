@@ -26,8 +26,10 @@ from langgraph.graph.state import CompiledStateGraph
 
 from agentgate.config import CheckpointerBackend, Settings
 from agentgate.errors import AgentgateError
+from agentgate.graph.nodes.approval import approval_gate
 from agentgate.graph.nodes.classify import classify
 from agentgate.graph.nodes.drafter import draft
+from agentgate.graph.nodes.execute import execute
 from agentgate.graph.nodes.finalise import finalise
 from agentgate.graph.nodes.lanes import LANE_NODES, LaneNode
 from agentgate.graph.nodes.researcher import dispatch, research
@@ -107,6 +109,8 @@ def build_graph(
     graph.add_node("supervisor", partial(supervise, settings=settings))
     graph.add_node("researcher", partial(research, settings=settings))
     graph.add_node("drafter", partial(draft, settings=settings, model_factory=model_factory))
+    graph.add_node("approval_gate", partial(approval_gate, settings=settings))
+    graph.add_node("execute", partial(execute, settings=settings))
     graph.add_node(RESEARCH_BRANCH, build_retrieval_subgraph(settings, retriever_factory))
     graph.add_node("budget_guard", _budget_guard)
     graph.add_node("finalise", partial(finalise, settings=settings))
@@ -143,6 +147,16 @@ def build_graph(
     # edge as well would describe a second path that never runs.
 
     graph.add_edge("drafter", "supervisor")
+
+    # The approval gate leaves by Command(goto=...) -- "execute" on approval, "drafter" on
+    # rejection. The rejection edge is the revision loop, and it is the only loop in the graph
+    # that a person can drive indefinitely, which is what finally gives the iteration cap
+    # something to cap.
+    #
+    # `execute` has exactly one edge in, from the approved branch. It checks the decision on
+    # state as well: the topology is true until someone draws another edge, and the node's own
+    # check is true regardless of what the topology looks like.
+    graph.add_edge("execute", "supervisor")
 
     graph.add_conditional_edges(
         "budget_guard",

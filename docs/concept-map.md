@@ -34,7 +34,13 @@ Status: **Phase 3 complete.** Phases 4 to 9 pending.
 | `SqliteSaver` | **done** | `graph/build.py:checkpointer_for` |
 | `PostgresSaver` | **done** (wired; server-backed run is Phase 8) | `graph/build.py:checkpointer_for` |
 | Checkpointer chosen by config, never by editing code | **done** | `graph/build.py`; asserted in `tests/integration/test_graph.py` |
-| `interrupt()` approval gate | pending — Phase 5 | `graph/nodes/approval.py` |
+| `interrupt()` approval gate | **done** | `graph/nodes/approval.py:approval_gate` |
+| Resume with `Command(resume=...)` | **done** | `tests/integration/test_approval_gate.py` |
+| Test proving node re-execution from top on resume | **done** | `test_the_interrupted_node_re_executes_from_its_top_on_resume` |
+| No side effect before the interrupt | **done** | `graph/nodes/approval.py`; `test_nothing_above_the_pause_writes_an_audit_event` |
+| Reject-with-feedback → revise → back to the gate | **done** | `graph/nodes/approval.py`; `graph/nodes/supervisor.py` |
+| `execute` reachable only past the gate | **done** | `graph/nodes/execute.py` |
+| Iteration cap exercised end to end | **done** | `test_a_reviewer_who_never_approves_is_stopped_by_the_iteration_cap` |
 | Resume with `Command(resume=...)` | pending — Phase 5 | `graph/nodes/approval.py` |
 | Test proving node re-execution from top on resume | pending — Phase 5 | `tests/integration/` |
 | No side effect before the interrupt | pending — Phase 5 | `graph/nodes/approval.py` |

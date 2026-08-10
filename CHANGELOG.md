@@ -115,6 +115,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recorded, not fixed: the spend guard accounts chat-model usage and cannot see embedding
   spend, which is free on the fake lane and real on the cloud lane. ADR 0004, item 9.
 
+- The human gate: `interrupt()` called from inside the node, resumed with `Command(resume=...)`.
+  Nothing above the pause has a side effect, because resume re-executes the node from its top —
+  proven by observation rather than quoted, with a counter watched going up on every resume.
+- Reject-with-feedback returns the draft to the drafter and comes back to the gate. That loop
+  is the first thing in this system that can fail to stop on its own, so the iteration cap is
+  now exercised end to end against a reviewer who never approves: the run terminates on the
+  budget and records `budget_exceeded` as the reason.
+- `execute` is reachable only past the approved branch, and checks the decision on state as
+  well. The topology is true until someone draws another edge; the node's own check is not.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
