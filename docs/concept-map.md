@@ -43,9 +43,11 @@ commitment.
 | `get_state_history` | not built | `cli.py` |
 | Fork from a past checkpoint | not built | `cli.py` |
 | `update_state(as_node=...)` | not built | `cli.py` |
-| Time travel exposed via CLI | not built | `cli.py` |
-| `stream_mode=["updates", "messages"]` | not built | `api/` |
+| Time travel exposed via CLI | not built | Phase 6 primitives absent; `cli.py --help` says so |
+| `stream_mode=["updates", "messages"]` | **done** | `cli.py:_stream`; SSE surface still to come |
 | Streaming surfaced as SSE | not built | `api/` |
+| CLI: run, resume, approve, reject | **done** | `cli.py`; `tests/integration/test_cli.py` |
+| Resume across processes, not just sessions | **done** | `tests/integration/test_cli.py::test_approving_from_a_fresh_process_resumes_the_same_run` |
 | `recursion_limit` | **done** | passed at invoke; ordering vs the budget guard asserted in `tests/integration/test_graph.py` |
 | Iteration counter + budget check in a conditional edge | **done** | `graph/routing.py:route_by_budget`; counter in `state.iterations` |
 
