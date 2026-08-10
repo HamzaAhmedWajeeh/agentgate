@@ -89,6 +89,7 @@ Things this build surfaced that were not on the original list, kept because each
 | Committed OpenAI-compatible stub server | **done** | `tests/doubles/openai_compatible.py` |
 | Spend ledger with run and session ceilings | **done** (not yet wired into the graph) | `guardrails/spend.py`; used by the live suite only |
 | Unmeasured usage is an error, never a free call | **done** | `guardrails/spend.py:usage_of` |
+| Output check: citation provenance | **done** | `guardrails/output.py:check_provenance`; `tests/unit/test_output_guardrail.py` |
 | Per-call-class output ceilings | **done** | `config.py:max_tokens_for`; asserted on the wire in `tests/integration/test_resilience.py` |
 | Wire-level assertions, never client attributes | **done** | `tests/integration/test_resilience.py:on_the_wire` |
 | Unknown `AGENTGATE_*` variable rejected with a suggestion | **done** | `config.py:_reject_unknown_variables` |

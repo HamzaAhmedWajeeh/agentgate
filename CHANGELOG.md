@@ -136,6 +136,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when enabled. It does not raise on an unregistered type in a checkpoint — it drops the value
   and lets the run continue, turning a visible notice into silent data loss. ADR 0004, item 10.
 
+- An output guardrail on citation provenance: every source the draft cites must be one
+  research actually returned, and a fabricated citation is an audit event. Exact rather than
+  heuristic on purpose — a guardrail that is right most of the time converts "we do not check
+  this" into "we check this", and the second is false in the cases that matter. It cannot see
+  an uncited fabrication, and says so.
+- `docs/concept-map.md` is now held to the repository by a test, in both directions, after it
+  spent a phase claiming five concepts were simultaneously built and not built.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
