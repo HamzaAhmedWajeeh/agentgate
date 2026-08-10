@@ -78,7 +78,7 @@ def classify(
         failed_reason = str(error)[:200]
 
     return {
-        "classification": classification,
+        "classification": classification.as_channel(),
         "audit_trail": [
             audit_event(
                 node=NODE,

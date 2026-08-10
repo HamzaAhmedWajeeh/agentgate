@@ -112,8 +112,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   19,200, from a measured heaviest run of 1,920 tokens at the fan-out limit. Spend ceilings
   follow. The Phase 3 note predicted the old ceiling would reject every Phase 4 run; it would
   not have, and what it recorded instead is in `.env.example`.
-- Recorded, not fixed: the spend guard accounts chat-model usage and cannot see embedding
-  spend, which is free on the fake lane and real on the cloud lane. ADR 0004, item 9.
+- Embedding spend goes through the ledger, on the same three rules as a chat call: a response
+  with no usage is an error rather than a zero, an unpriced embedding model refuses to start,
+  and spend is recorded per model. Checked after every batch, so a runaway index trips the
+  ceiling while it runs rather than reporting the bill afterwards. **The run budget means all
+  spend, not chat spend** — ADR 0004 item 9 is closed with the decision and the reasoning, not
+  just the change.
+- Recorded: `langchain_openai.OpenAIEmbeddings` discards the `usage` block the API returns,
+  which is the one field the budget depends on, so the embedding call goes through the provider
+  client directly. ADR 0004, item 11.
+
+- The human gate: `interrupt()` called from inside the node, resumed with `Command(resume=...)`.
+  Nothing above the pause has a side effect, because resume re-executes the node from its top —
+  proven by observation rather than quoted, with a counter watched going up on every resume.
+- Reject-with-feedback returns the draft to the drafter and comes back to the gate. That loop
+  is the first thing in this system that can fail to stop on its own, so the iteration cap is
+  now exercised end to end against a reviewer who never approves: the run terminates on the
+  budget and records `budget_exceeded` as the reason.
+- `execute` is reachable only past the approved branch, and checks the decision on state as
+  well. The topology is true until someone draws another edge; the node's own check is not.
+
+- State channels hold JSON-serialisable data only. A checkpoint is a persistence format, not
+  an in-process value: it outlives the process, the deploy, and under Postgres the container,
+  so anything crossing that boundary is a wire format with a schema. `Finding`,
+  `Classification` and `ResearchOutcome` stay as parse-and-serialise helpers at node
+  boundaries. Recorded in ADR 0011, including why registering the types was the wrong half of
+  the problem to solve and why the pytest configuration this was meant to use does not exist.
+
+- Recorded, not fixed: `LANGGRAPH_STRICT_MSGPACK=true` is a control that makes things worse
+  when enabled. It does not raise on an unregistered type in a checkpoint — it drops the value
+  and lets the run continue, turning a visible notice into silent data loss. ADR 0004, item 10.
+
+- An output guardrail on citation provenance: every source the draft cites must be one
+  research actually returned, and a fabricated citation is an audit event. Exact rather than
+  heuristic on purpose — a guardrail that is right most of the time converts "we do not check
+  this" into "we check this", and the second is false in the cases that matter. It cannot see
+  an uncited fabrication, and says so.
+- `docs/concept-map.md` is now held to the repository by a test, in both directions, after it
+  spent a phase claiming five concepts were simultaneously built and not built.
+
+- A durable audit trail: append-only JSON lines, self-describing field names, timezone-aware
+  timestamps, and the request recorded as a hash rather than content. Chosen for a reader who
+  does not have this repository — the same argument that decided the checkpoint boundary in ADR
+  0011, one level out.
+- Gate coverage enforced by discovery rather than by a list. The gates are enumerated from the
+  code and each must have written an event, so a gate added later without one fails the build.
+  Mutation-checked across eight ways a gate could go silent.
+- `openai` declared as a direct dependency. It was already installed as a transitive one, and
+  `retrieval/accounting.py` imports it directly because `OpenAIEmbeddings` drops the usage block
+  the budget depends on. An undeclared transitive import is a coupling nobody can see.
 
 ### Fixed
 
@@ -121,6 +168,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pytest subprocess that were not declared settings, and the unknown-variable guard rejected
   them, so every live case failed at configuration before reaching a provider. Both are
   declared settings now. Recorded as item 7 of the leak inventory in ADR 0004.
+- The lane nodes recorded themselves in the audit trail as `bind_cloud_capable` while the graph
+  knew them as `cloud_capable`, so a reader correlating the trail against the topology found no
+  such node. Found by the gate-discovery test on its first run.
 - The retrieval corpus was not copied into the container image. The runtime stage ships the
   virtualenv, which covers code and not data, so every research branch would have failed
   inside the container while every offline test passed — the suite runs from a checkout where

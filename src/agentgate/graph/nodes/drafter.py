@@ -27,7 +27,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import CallClass, Settings, Tier
 from agentgate.graph.completeness import research_gaps
-from agentgate.graph.state import AgentState
+from agentgate.graph.state import AgentState, findings_of
+from agentgate.guardrails.output import check_provenance
 from agentgate.models.registry import ModelFactory, build_model
 from agentgate.tools.allowlist import AllowlistMiddleware
 from agentgate.tools.registry import Agent, tools_for
@@ -45,7 +46,7 @@ Keep it short. Structure it the way the request asks for."""
 
 def _brief(state: AgentState) -> str:
     """What the drafter is shown: the request, and the findings, and nothing else."""
-    findings = state.get("findings", [])
+    findings = findings_of(state)
     lines = [f"Request:\n{state.get('request', '')}\n", "Findings:"]
     if not findings:
         lines.append("  (none — research produced nothing)")
@@ -98,10 +99,30 @@ def draft(
         "",
     )
 
+    # Checked against the draft that was just produced, not against state -- `draft` is written
+    # by this return and is not in state yet.
+    provenance = check_provenance({**state, "draft": text})
+
+    fabrication_events = (
+        [
+            audit_event(
+                node=NODE,
+                decided=Decided.CITATION_FABRICATED,
+                correlation_id=correlation_id,
+                input_digest=digest(text),
+                lane=state.get("lane"),
+                detail=provenance.as_detail(),
+            )
+        ]
+        if not provenance.clean
+        else []
+    )
+
     return {
         "draft": text,
         "audit_trail": [
             *guard.events,
+            *fabrication_events,
             audit_event(
                 node=NODE,
                 decided=Decided.DRAFTED,
@@ -115,6 +136,7 @@ def draft(
                     "tools_denied": sorted(set(guard.denied)),
                     "draft_characters": len(text),
                     "drafted_from_partial_research": not research_gaps(state).complete,
+                    "citations_clean": provenance.clean,
                 },
             ),
         ],

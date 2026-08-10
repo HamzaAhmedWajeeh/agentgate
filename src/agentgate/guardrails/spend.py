@@ -149,11 +149,20 @@ class SpendLedger:
 
     def record(self, model: str, reply: AIMessage) -> Usage:
         """Account for one model call, and roll it up into the session if there is one."""
-        usage = usage_of(reply)
+        return self.record_usage(model, usage_of(reply))
+
+    def record_usage(self, model: str, usage: Usage) -> Usage:
+        """Account for usage that did not arrive on a chat reply.
+
+        Embeddings are the reason this exists: the API reports usage but not as
+        ``usage_metadata`` on an ``AIMessage``, and the alternative to a second entry point was
+        fabricating a message to carry it. Recorded against the model rather than against a
+        category, so the summary says `text-embedding-3-small` and not `embeddings`.
+        """
         self.usage_by_model[model] = self.usage_by_model.get(model, Usage()) + usage
         self.calls += 1
         if self.session is not None:
-            self.session.record(model, reply)
+            self.session.record_usage(model, usage)
         return usage
 
     @property

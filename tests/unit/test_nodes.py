@@ -71,7 +71,7 @@ def test_classify_returns_a_validated_verdict() -> None:
 
     update = classify(state, settings_with(), model_factory=factory_returning(verdict))  # type: ignore[arg-type]
 
-    assert update["classification"].sensitivity is Sensitivity.INTERNAL
+    assert update["classification"]["sensitivity"] == Sensitivity.INTERNAL.value
     assert update["audit_trail"][0]["decided"] == Decided.CLASSIFIED.value
 
 
@@ -108,8 +108,8 @@ def test_unparseable_classification_is_treated_as_restricted() -> None:
         model_factory=factory_returning("I'm sorry, I can't help with that."),  # type: ignore[arg-type]
     )
 
-    assert update["classification"].sensitivity is Sensitivity.RESTRICTED
-    assert update["classification"].contains_pii is True
+    assert update["classification"]["sensitivity"] == Sensitivity.RESTRICTED.value
+    assert update["classification"]["contains_pii"] is True
 
 
 def test_a_failed_classification_routes_to_the_most_restrictive_lane() -> None:

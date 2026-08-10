@@ -127,26 +127,23 @@ def test_an_unparseable_verdict_still_lands_on_the_sovereign_lane() -> None:
 # --------------------------------------------------------------------------- the budget gate
 
 
-def test_nothing_in_the_graph_loops_yet_so_the_guard_has_nothing_to_stop() -> None:
-    """This test used to prove the guard beat a runaway supervisor. Phase 4 removed the
-    runaway, and pretending otherwise would be worse than recording the gap.
+def test_the_unattended_path_is_bounded_without_the_guard_having_to_act() -> None:
+    """Two turns of this test's history are worth keeping, because both were honest at the time.
 
-    Until Phase 4 the supervisor re-dispatched its outstanding sub-questions on every turn and
-    never cleared them, so a run span until the guard stopped it. That was never a real
-    behaviour -- it was an absent feature that happened to look like a loop. The supervisor now
-    dispatches research once, checks ``dispatched`` rather than inferring from findings, and
-    finalises. Every path through the graph is bounded by construction.
+    Before Phase 4 it proved the guard beat a runaway supervisor -- but the runaway was the
+    absence of the research feature, not a behaviour. Phase 4 removed it and this test recorded
+    a gap instead: nothing looped, so ``route_by_budget`` never returned ``"continue"`` and the
+    iteration cap had nothing to cap.
 
-    The consequence, stated plainly: ``route_by_budget`` never returns ``"continue"`` in Phase
-    4, so the ``supervisor -> budget_guard -> supervisor`` edge is currently unreachable and
-    the iteration cap has nothing to cap. **The guard is not verified end to end.** It is a
-    backstop for the revision loop in Phase 5 -- reject, revise, return to the gate -- which is
-    the first thing here that can genuinely fail to stop itself.
+    Phase 5 closed the gap. The revision loop -- reject, revise, return to the gate -- is a
+    real loop a real person drives, and
+    ``test_approval_gate.py::test_a_reviewer_who_never_approves_is_stopped_by_the_iteration_cap``
+    exercises the cap end to end against it. That is where the guard is now proven.
 
-    What is pinned meanwhile: the decision function is still correct at the boundary, and turn
-    count is independent of the budget, which is what "nothing loops" means in practice. If a
-    future change makes a run's length depend on ``max_iterations`` again, that is a loop
-    arriving, and it should arrive deliberately.
+    What is left for this test is the complementary claim, and it is worth having on its own:
+    **without a human in the loop, the graph is bounded by construction.** A run that reaches
+    the gate and stops there took a fixed number of turns regardless of the budget. If that
+    ever stops being true, an unattended loop has appeared, and it should appear deliberately.
     """
     tight = settings_with(max_iterations=3, recursion_limit=40)
     generous = settings_with(max_iterations=20, recursion_limit=40)

@@ -38,6 +38,12 @@ dependencies = [
     "langchain==1.3.14",
     "langchain-core==1.5.3",
     "langchain-openai==1.4.2",
+    # Already required by langchain-openai, declared because retrieval/accounting.py calls the
+    # provider client directly. OpenAIEmbeddings returns the vectors and drops the `usage` block
+    # the spend guard accounts from, so the embedding path reads the response itself rather than
+    # estimating tokens or recording zero. See ADR 0004, item 11. An undeclared transitive
+    # import is a coupling nobody can see.
+    "openai==2.53.0",
     # Checkpointers. Selected at runtime by config, never by editing code.
     "langgraph-checkpoint-sqlite==3.1.1",
     "langgraph-checkpoint-postgres==3.1.2",
@@ -152,6 +158,13 @@ testpaths = ["tests"]
 # shared across test modules and are library code, not fixtures local to one file.
 pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config -m 'not live'"
+# No `filterwarnings` entry for the checkpoint deserialisation notice, and the absence is
+# deliberate: it is not a Python warning. LangGraph prints it, so `filterwarnings` cannot see
+# it and an entry here would have been a rule that enforced nothing while looking like it did.
+# `LANGGRAPH_STRICT_MSGPACK=true` does not raise either -- it blocks the value and continues,
+# which is a silent drop rather than a failure. The enforcement is therefore ours:
+# `tests/integration/test_checkpoint_serialisation.py` walks a real run's channels and fails on
+# anything that is not JSON data. See ADR 0011.
 asyncio_mode = "auto"
 markers = [
     "live: hits a real model provider, costs money, and is deselected by default",

@@ -478,15 +478,20 @@ class Settings(BaseSettings):
         Without a price the spend guard cannot account, and the safe reading of "unknown
         cost" is a refusal to start -- not an assumption of zero, which would leave the
         ceiling permanently uncrossed while real money was spent.
+
+        **The embedding model is in this set.** It was not until the run budget was ruled to
+        mean all spend rather than chat spend, and its absence was the whole of leak-inventory
+        item 9: indexing and querying the corpus cost real money that no ceiling could see. An
+        embedding model with no price is the same refusal as a chat model with no price, for
+        the same reason.
         """
         if not self.requires_network:
             return self
+        reachable = {self.model_for(tier) for tier in Tier}
+        if self.embedding_model:
+            reachable.add(self.embedding_model)
         unpriced = sorted(
-            {
-                model
-                for model in (self.model_for(tier) for tier in Tier)
-                if model not in self.model_prices_usd_per_million
-            }
+            model for model in reachable if model not in self.model_prices_usd_per_million
         )
         if unpriced:
             msg = (

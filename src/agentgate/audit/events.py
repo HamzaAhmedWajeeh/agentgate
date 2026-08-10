@@ -36,6 +36,7 @@ class Decided(StrEnum):
     RESEARCHED = "researched"
     RESEARCH_FAILED = "research_failed"
     DRAFTED = "drafted"
+    CITATION_FABRICATED = "citation_fabricated"
     TOOL_DENIED = "tool_denied"
     TOOL_FAILED = "tool_failed"
     BUDGET_CHECKED = "budget_checked"

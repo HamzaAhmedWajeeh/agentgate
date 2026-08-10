@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agentgate.graph.state import AgentState
+from agentgate.graph.state import AgentState, outcomes_of
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ class ResearchGaps:
 def research_gaps(state: AgentState) -> ResearchGaps:
     """Count what the fan-out lost, if anything."""
     dispatched = state.get("dispatched", 0)
-    outcomes = state.get("research_outcomes", [])
+    outcomes = outcomes_of(state)
     failed = [outcome for outcome in outcomes if not outcome.ok]
 
     return ResearchGaps(

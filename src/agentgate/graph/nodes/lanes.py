@@ -15,7 +15,7 @@ from typing import Protocol
 
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Lane, Settings, Tier
-from agentgate.graph.state import AgentState
+from agentgate.graph.state import AgentState, classification_of
 
 
 class LaneNode(Protocol):
@@ -29,17 +29,21 @@ class LaneNode(Protocol):
     def __call__(self, state: AgentState, *, settings: Settings) -> AgentState: ...
 
 
-def bind_lane(lane: Lane, tier: Tier) -> LaneNode:
+def bind_lane(node_name: str, lane: Lane, tier: Tier) -> LaneNode:
     """Build the node that records a lane and tier selection.
 
     Args:
+        node_name: What the graph calls this node. Passed in rather than derived, because the
+            audit trail has to name the node the way the topology does -- these once recorded
+            themselves as `bind_cloud_capable` while the graph knew them as `cloud_capable`, so
+            a reader correlating the trail against the graph found no such node. Caught by the
+            gate-discovery test, which enumerates from `LANE_NODES` and could not match.
         lane: Where this request is now allowed to go.
         tier: Which capability tier within that lane.
     """
-    node_name = f"bind_{lane.value}_{tier.value}"
 
     def bind(state: AgentState, *, settings: Settings) -> AgentState:
-        classification = state.get("classification")
+        classification = classification_of(state)
         return {
             # Stored as a plain string: state is serialised into checkpoints, and an enum
             # that round-trips through JSON as a string but is compared as an enum is a
@@ -72,7 +76,7 @@ def bind_lane(lane: Lane, tier: Tier) -> LaneNode:
 # mismatch between these keys and that Literal is a graph that compiles and then dead-ends at
 # runtime, so they are defined together and asserted equal in the tests.
 LANE_NODES: dict[str, LaneNode] = {
-    "cloud_capable": bind_lane(Lane.CLOUD, Tier.CAPABLE),
-    "cloud_cheap": bind_lane(Lane.CLOUD, Tier.CHEAP),
-    "sovereign": bind_lane(Lane.SOVEREIGN, Tier.CHEAP),
+    "cloud_capable": bind_lane("cloud_capable", Lane.CLOUD, Tier.CAPABLE),
+    "cloud_cheap": bind_lane("cloud_cheap", Lane.CLOUD, Tier.CHEAP),
+    "sovereign": bind_lane("sovereign", Lane.SOVEREIGN, Tier.CHEAP),
 }
