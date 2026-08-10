@@ -18,9 +18,11 @@ workflow.
 
 ## Status
 
-Under construction, built in phases. This README documents only what is covered by a test or by
-a check that has actually been run — nothing here is aspirational, and the architecture diagram
-arrives with the graph it describes rather than before it.
+**The build is paused at Phase 5 of nine.** Phases 6 to 9 — long-term memory and time travel,
+the API and CLI surfaces, production hardening, and the eval suite — are planned and unstarted.
+
+This README documents only what is covered by a test or by a check that has actually been run.
+Nothing here is aspirational, and nothing below is a promise about what will exist.
 
 **Working today**
 
@@ -40,13 +42,42 @@ arrives with the graph it describes rather than before it.
 - `make models` lists the model identifiers a key can reach. It cannot tell you what they cost,
   and says so: that API exposes no pricing, and no price is ever inferred from a name.
 
-**Not built yet:** the graph, retrieval, the gates, observability, and every surface.
+- The graph: classification, a policy gate that routes restricted content to the sovereign lane,
+  research fanned out over a compiled retrieval subgraph, a drafting worker, and a human
+  approval gate that pauses before anything irreversible. Rejection returns the draft for
+  revision, and a reviewer who never approves is stopped by the iteration budget rather than by
+  giving up.
+- Dense in-process retrieval over a committed corpus of synthetic documents. No service is
+  needed to run it and no key is needed to test it.
+- Per-agent tool allowlists enforced between the model's request and the executor, not by the
+  prompt. A model scripted to demand an irreversible tool is refused before the handler runs.
+- Budget gates on iterations, tokens, and fan-out width. The width cap is the only one decided
+  before the spending rather than counted after it, because the list being fanned out over is
+  model output.
+- An append-only audit trail in graph state, recording what decided, what it decided, and on
+  what input hash — never on the input itself.
+
+**Not built.** Long-term memory and time travel, the FastAPI and CLI surfaces, streaming,
+structlog/OpenTelemetry/Prometheus instrumentation, and the eval suite. `docs/concept-map.md`
+lists every concept and marks each one built or not built; a row there describes the repository
+as it is today.
+
+**Built but not yet wired.** The spend ledger enforces run and session ceilings and is exercised
+by the live suite, but nothing in the graph accounts against it yet. Until it is, the token and
+spend ceilings bound what `make measure` derives rather than what a run actually consumes.
+
+**Not accounted at all.** Embedding calls. The ledger reads chat-model usage metadata, and
+embeddings do not produce it, so on the cloud lane indexing and querying the corpus costs money
+no ceiling here can see. Recorded as item 9 of the leak inventory in
+[ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md); the decision is that the run budget
+means all spend, and the code has not caught up with it.
 
 **Deferred verification.** The sovereign lane is exercised against the committed stub server
 over real HTTP. Ollama and vLLM are the intended targets and neither has been run against yet,
-so neither is claimed. The same applies to observability: LangSmith is to be verified against a
-free-tier account and OTLP against a collector in the Compose stack, and until each has
-actually run, neither is claimed either.
+so neither is claimed. The cloud lane has one live-probed capability row; tool calling and
+embeddings have never been watched against a real provider. The same applies to observability:
+LangSmith and OTLP are designed for and unverified, and until each has actually run, neither is
+claimed either.
 
 ## Quickstart
 
