@@ -77,12 +77,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The cloud lane's first capability-matrix row, from a live probe against a real key on
   2026-08-10: native structured output is supported. The live suite enforces the row.
 
+- A committed corpus of four synthetic documents describing an organisation that does not
+  exist, chunked on Markdown headings because a heading is the author's own statement about
+  where one idea ends. `make seed` indexes it and prints what sample queries retrieve.
+- Dense in-process retrieval: embeddings chosen by lane like models, an exhaustive cosine
+  search written rather than imported, and Qdrant declared in configuration but raising rather
+  than silently falling back. Recorded in ADR 0010, including the two things about the offline
+  embedder that were found by running it — a 70% hash-collision rate at the first dimension
+  chosen, and `hash()` being salted per process.
+
+- Research fan-out: the supervisor dispatches sub-questions to a compiled retrieval subgraph
+  with one `Send` per question, and each branch hands its finding back with
+  `Command(graph=Command.PARENT)`. Fan-in is the parent's `operator.add` reducer, so it is a
+  property of the state schema rather than of any collecting code.
+- `AGENTGATE_MAX_FAN_OUT` caps how many branches one dispatch may open, enforced where `Send`
+  objects are constructed. This is the only budget decided before the spending rather than
+  counted after it: the list being fanned out over is model output, so without it the model
+  chooses how many calls get paid for.
+- A branch that fails is caught, recorded, and does not take its siblings down with it, and
+  the run that results is marked `answer_complete: false` rather than presenting a partial
+  answer in the shape of a whole one. `dispatched` is compared against the outcomes so a
+  branch that reports nothing at all is still counted as missing.
+
+- A drafter worker built with `create_agent` — the one prebuilt agent in the system, so the
+  repository shows the fast path as well as the explicit one, and shows what it costs: the
+  model-tool loop is not visible in `build.py`, which is exactly why the allowlist is
+  middleware rather than a list of bound tools.
+- Per-agent tool allowlists enforced in `wrap_tool_call`, between the model's request and the
+  executor. The drafter cannot reach an irreversible tool — not "does not": a model scripted
+  to demand `issue_refund` is refused before the handler runs, and the refusal is an audit
+  event. No part of the enforcement is in a prompt, and a test asserts the prompt stays out of
+  it. Tool failures are summarised back to the model rather than raised.
+- Ceilings re-derived now that fan-out exists: `AGENTGATE_MAX_TOTAL_TOKENS` moves from 2,370 to
+  19,200, from a measured heaviest run of 1,920 tokens at the fan-out limit. Spend ceilings
+  follow. The Phase 3 note predicted the old ceiling would reject every Phase 4 run; it would
+  not have, and what it recorded instead is in `.env.example`.
+- Recorded, not fixed: the spend guard accounts chat-model usage and cannot see embedding
+  spend, which is free on the fake lane and real on the cloud lane. ADR 0004, item 9.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
   pytest subprocess that were not declared settings, and the unknown-variable guard rejected
   them, so every live case failed at configuration before reaching a provider. Both are
   declared settings now. Recorded as item 7 of the leak inventory in ADR 0004.
+- The retrieval corpus was not copied into the container image. The runtime stage ships the
+  virtualenv, which covers code and not data, so every research branch would have failed
+  inside the container while every offline test passed — the suite runs from a checkout where
+  `corpus/` is simply there. Copied now, and pinned by a static check of the runtime stage.
 - `AGENTGATE_LIVE_SPEND_ABORT_USD` was computed, printed, and read by nothing. It now bounds
   the suite while it runs, rather than only being compared against the total afterwards.
 

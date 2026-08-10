@@ -27,12 +27,22 @@ from langgraph.graph.state import CompiledStateGraph
 from agentgate.config import CheckpointerBackend, Settings
 from agentgate.errors import AgentgateError
 from agentgate.graph.nodes.classify import classify
+from agentgate.graph.nodes.drafter import draft
 from agentgate.graph.nodes.finalise import finalise
 from agentgate.graph.nodes.lanes import LANE_NODES, LaneNode
+from agentgate.graph.nodes.researcher import dispatch, research
 from agentgate.graph.nodes.supervisor import supervise
 from agentgate.graph.routing import route_by_budget, route_by_policy
 from agentgate.graph.state import AgentState
+from agentgate.graph.subgraphs.retrieval import (
+    NODE as RESEARCH_BRANCH,
+)
+from agentgate.graph.subgraphs.retrieval import (
+    RetrieverFactory,
+    build_retrieval_subgraph,
+)
 from agentgate.models.registry import ModelFactory, build_model
+from agentgate.retrieval.index import build_retriever
 
 
 class GraphNode(Protocol):
@@ -57,6 +67,7 @@ def build_graph(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     model_factory: ModelFactory = build_model,
     interrupt_before: Sequence[str] | None = None,
+    retriever_factory: RetrieverFactory = build_retriever,
 ) -> Any:
     """Assemble and compile the graph.
 
@@ -67,6 +78,8 @@ def build_graph(
             fire-and-forget invocation.
         model_factory: How nodes obtain models. Injected rather than imported so a test can
             script replies without patching a global.
+        retriever_factory: How a research branch obtains a retriever. Injected for the same
+            reason, and called lazily -- compiling a graph does not read the corpus.
         interrupt_before: Nodes to pause before. A compile-time option in LangGraph 1.x --
             passing it in the invoke config is silently ignored, which makes a paused-run
             test quietly assert nothing. Used for debugging and by the resume tests; the
@@ -92,6 +105,9 @@ def build_graph(
     for name, node in LANE_NODES.items():
         graph.add_node(name, bound(node))
     graph.add_node("supervisor", partial(supervise, settings=settings))
+    graph.add_node("researcher", partial(research, settings=settings))
+    graph.add_node("drafter", partial(draft, settings=settings, model_factory=model_factory))
+    graph.add_node(RESEARCH_BRANCH, build_retrieval_subgraph(settings, retriever_factory))
     graph.add_node("budget_guard", _budget_guard)
     graph.add_node("finalise", partial(finalise, settings=settings))
 
@@ -109,8 +125,24 @@ def build_graph(
     for name in LANE_NODES:
         graph.add_edge(name, "supervisor")
 
-    # The supervisor reaches budget_guard by returning Command(goto=...), so no static edge is
-    # declared for it. The destination is still declared to the compiler below.
+    # The supervisor reaches budget_guard and researcher by returning Command(goto=...), so no
+    # static edge is declared for either. The destinations are still declared to the compiler
+    # by the nodes existing.
+
+    # The fan-out. A conditional edge rather than a node return, because this is the one place
+    # the width has to be guaranteed: `dispatch` caps here, at the point Send objects are
+    # constructed, so the number of branches is bounded before any of them is scheduled. The
+    # researcher node applied the same cap a step earlier and recorded why the list shrank --
+    # this is the enforcement, that was the explanation.
+    graph.add_conditional_edges(
+        "researcher", partial(dispatch, settings=settings), [RESEARCH_BRANCH]
+    )
+
+    # No edge leaves RESEARCH_BRANCH. Every branch exits by Command(graph=Command.PARENT,
+    # goto="supervisor") from inside the subgraph, which is the handoff, and declaring a static
+    # edge as well would describe a second path that never runs.
+
+    graph.add_edge("drafter", "supervisor")
 
     graph.add_conditional_edges(
         "budget_guard",

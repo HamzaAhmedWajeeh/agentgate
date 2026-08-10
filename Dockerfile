@@ -55,6 +55,12 @@ WORKDIR /app
 
 COPY --from=builder --chown=${UID}:${UID} /app/.venv /app/.venv
 
+# The retrieval corpus. Read-only data, not code, and not installed with the package -- so
+# without this line AGENTGATE_CORPUS_PATH resolves to a directory that does not exist inside
+# the image and every research branch fails. The offline suite cannot catch that: it runs from
+# a checkout where `corpus/` is simply there.
+COPY --chown=${UID}:${UID} corpus/ /app/corpus/
+
 # Writable state lives here and nowhere else, so the rest of the filesystem can be mounted
 # read-only. Compose mounts a volume over it.
 RUN install -d -o ${UID} -g ${UID} /app/data

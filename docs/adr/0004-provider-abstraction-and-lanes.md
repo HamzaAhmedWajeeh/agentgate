@@ -146,7 +146,17 @@ a row that stops being true fails the build instead of quietly rotting.
 | **Consequence** | `Ceilings` is a required argument to `SpendLedger`, so a ledger has to say what it is accounting. The suite's ceiling has its own basis — the gatekeeper's estimate times the tolerance, the same bound as the dollar abort in the other unit — and `make test-live` now prints estimated against actual tokens as well as dollars, so the figure the ceiling rests on is observed rather than assumed. `AGENTGATE_LIVE_SPEND_ABORT_USD` tightens it, which is the first time that value has been enforced during a suite rather than reported after one. |
 | **Recorded** | `.env.example`, next to the run ceilings it is deliberately not part of. The failure mode worth naming: charged against the wrong ceiling, the suite aborts for being a suite, and the obvious remedy is to raise the run ceiling — weakening the guard that was working. |
 
-### 9. Not measured yet, and therefore not claimed
+### 9. The spend guard cannot see embedding spend
+
+| | |
+| --- | --- |
+| **Difference** | `SpendLedger` accounts from `usage_metadata` on chat-model replies. Embeddings do not produce one. On the cloud lane, indexing the corpus and embedding every research query costs real money that no ceiling in this system can observe — the run ceiling, the session ceiling, and the live-suite ceiling are all blind to it. |
+| **How established** | Found while re-deriving the ceilings at the end of Phase 4. `make measure` reports two model calls for a run that saturates the fan-out; the five research branches make none, because on the fake lane retrieval is embedding-only and embeddings are free. The zero is real on the fake lane and false on the cloud lane, which is the worst combination: the offline suite will never show it. |
+| **Evidence** | The measurement itself: `a request at the fan-out limit — 2 calls, 1,920 tokens`. Five branches, zero accounted calls. Nothing yet asserts the gap, which is why this row says "cannot see" rather than naming a test. |
+| **Consequence** | Stated in `.env.example` next to the token ceiling rather than left for someone to discover from a bill. Closing it means either accounting embedding usage into the ledger or declaring the corpus index a build-time cost outside the run budget — a real decision, not a patch, and it belongs with the guardrails work in Phase 5 rather than being improvised here. Until then no claim is made that the ceilings bound total spend; they bound *chat* spend. |
+| **Recorded** | Here, and in `.env.example`. Open. |
+
+### 10. Not measured yet, and therefore not claimed
 
 These are absent from the capability matrix on purpose. An absent row means "nobody asked",
 which `supports()` reads as unsupported — the pessimistic direction, where being wrong costs
@@ -154,7 +164,8 @@ some tokens on a fallback rather than a provider exception in a node that cannot
 
 | Gap | What would close it |
 | --- | --- |
-| Tool calling, on any lane | Phase 4, when tools exist. |
+| Tool calling, on any lane | Tools exist as of Phase 4 and the drafter binds them, but no live case has watched a real provider emit a tool call. A live case would change the suite's cost estimate and therefore its ceiling, so it lands with the next measured live run. |
+| Embeddings, on the cloud lane | `OpenAIEmbeddings` is wired and has never been called. The offline lane embeds in-process, so nothing in CI touches this path — see item 9 for the ceiling consequence. |
 | Streaming, on any lane | Phase 7, when the SSE surface exists. |
 | Ollama and vLLM behaviour | Neither has been run against. The stub stands in for the shape, not for a specific server. |
 

@@ -254,6 +254,21 @@ class Settings(BaseSettings):
     max_iterations: Positive = 8
     """Supervisor hand-offs allowed before the budget guard forces finalisation."""
 
+    max_fan_out: Positive = 5
+    """How many research branches one dispatch may open.
+
+    **The one budget decided before the spending, rather than counted after it.** Iterations
+    and tokens are both measured from what already happened, which is enough when work arrives
+    one call at a time. A ``Send`` fan-out is different: the list being fanned out over was
+    produced by a model, so without this the model chooses how many calls get paid for, and the
+    token ceiling only finds out once they have all run.
+
+    A policy limit, like ``max_iterations`` -- not a measurement. Its relationship to the token
+    ceiling is arithmetic (width times per-branch cost has to fit under the run budget), and
+    that arithmetic cannot be done honestly until a fan-out run has been measured. Re-derive
+    both together with ``make measure``.
+    """
+
     max_total_tokens: Positive = 120_000
 
     max_spend_usd: PositiveFloat = 0.50

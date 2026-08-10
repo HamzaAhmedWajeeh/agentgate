@@ -91,6 +91,20 @@ class Finding(BaseModel):
     source: str = ""
 
 
+class ResearchOutcome(BaseModel):
+    """What one research branch did, whether or not it produced a finding.
+
+    Separate from ``Finding`` because a branch that failed has no finding to record and is
+    exactly the branch worth knowing about. Counting findings alone cannot distinguish "the
+    question had no answer in the corpus" from "that branch raised and nobody noticed"; both
+    show up as one fewer item in a list.
+    """
+
+    question: str
+    ok: bool
+    detail: str = ""
+
+
 class AgentState(TypedDict, total=False):
     """State threaded through the graph.
 
@@ -115,6 +129,14 @@ class AgentState(TypedDict, total=False):
     """Append-only record of what each node decided. Concatenating is the only merge that
     preserves an audit trail -- last-write-wins would silently discard events."""
 
+    research_outcomes: Annotated[list[ResearchOutcome], operator.add]
+    """One entry per research branch that reported back, successful or not.
+
+    Findings alone cannot tell you whether a fan-out completed. Three findings from a fan-out
+    of three and three findings from a fan-out of five are the same list, and the second is a
+    partial answer. This channel is what makes the difference visible, and it accumulates for
+    the same reason ``findings`` does: every branch contributes and none of them compete."""
+
     # --- single-writer channels ------------------------------------------------------
     #
     # No reducer, deliberately. Each is written by exactly one node, so last-write-wins is
@@ -137,8 +159,22 @@ class AgentState(TypedDict, total=False):
     sub_questions: list[str]
     """Written by the supervisor when it dispatches research."""
 
+    dispatched: int
+    """How many branches the last fan-out opened.
+
+    Compared against ``len(research_outcomes)`` to catch a branch that reported nothing at all.
+    A branch that fails and says so appears in the outcomes; a branch that vanishes does not,
+    and without this number the two are indistinguishable from the fan-in side -- which is the
+    failure mode a fan-out has that a sequential loop does not."""
+
     draft: str
     """Written by the drafter alone."""
+
+    answer_complete: bool
+    """Whether every dispatched branch reported success. Written by ``finalise`` alone.
+
+    Recorded rather than derived at the point of display, so that a caller reading the final
+    state cannot present a partial answer as a whole one by forgetting to check."""
 
     decision: Decision
     """Written by the approval gate alone."""

@@ -20,9 +20,16 @@ Status: **Phase 3 complete.** Phases 4 to 9 pending.
 | Last-write-wins fields + `InvalidUpdateError` note | **done** | `graph/state.py` docstring; demonstrated in `tests/integration/test_parallel_writes.py` |
 | Conditional edge returning a `Literal` | **done** | `graph/routing.py:route_by_policy` |
 | `Command` combining update and `goto` | **done** | `graph/nodes/supervisor.py:supervise` |
-| `Command(graph=Command.PARENT)` handoff | pending — Phase 4 | `graph/subgraphs/retrieval.py` |
-| `Send` fan-out, reducer fan-in | pending — Phase 4 | `graph/nodes/researcher.py` |
-| Compiled subgraph used as a node | pending — Phase 4 | `graph/subgraphs/retrieval.py` |
+| `Command(graph=Command.PARENT)` handoff | **done** | `graph/subgraphs/retrieval.py:deliver` |
+| `Send` fan-out, reducer fan-in | **done** | `graph/nodes/researcher.py:dispatch`; fan-in via `state.py:findings` |
+| Fan-out width capped before dispatch | **done** | `graph/nodes/researcher.py:cap_fan_out`; `tests/integration/test_fan_out.py` |
+| Fan-out survives a failing branch, visibly | **done** | `graph/subgraphs/retrieval.py`; `graph/nodes/finalise.py:research_gaps` |
+| Compiled subgraph used as a node | **done** | `graph/subgraphs/retrieval.py:build_retrieval_subgraph` |
+| `create_agent` in exactly one worker | **done** | `graph/nodes/drafter.py:draft` |
+| `@tool` with Pydantic arg schemas | **done** | `tools/registry.py` |
+| Per-agent tool allowlist, enforced not documented | **done** | `tools/allowlist.py:AllowlistMiddleware`; `tests/integration/test_tool_allowlist.py` |
+| Tool failures summarised into state, never raised | **done** | `tools/allowlist.py:wrap_tool_call` |
+| Retrieval over the committed corpus | **done** | `retrieval/`; `corpus/` |
 | `InMemorySaver` | **done** | `graph/build.py:checkpointer_for` |
 | `SqliteSaver` | **done** | `graph/build.py:checkpointer_for` |
 | `PostgresSaver` | **done** (wired; server-backed run is Phase 8) | `graph/build.py:checkpointer_for` |

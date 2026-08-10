@@ -10,7 +10,7 @@ RUN := $(UV) run
 AUDIT_REQUIREMENTS := .audit-requirements.txt
 
 .DEFAULT_GOAL := help
-.PHONY: help setup lint format format-check typecheck test test-cov test-live check audit models measure config docker-build docker-up docker-down docker-logs clean
+.PHONY: help setup lint format format-check typecheck test test-cov test-live check audit models measure seed config docker-build docker-up docker-down docker-logs clean
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) \
@@ -53,6 +53,9 @@ models: ## List model identifiers this key can reach, with a price-table skeleto
 
 measure: ## Measure what one full run consumes, to derive the token ceiling
 	$(RUN) python scripts/measure_run.py
+
+seed: ## Index the committed corpus and show what a sample query retrieves
+	$(RUN) python scripts/seed_corpus.py
 
 config: ## Print the resolved configuration, secrets redacted
 	$(RUN) python -m agentgate
