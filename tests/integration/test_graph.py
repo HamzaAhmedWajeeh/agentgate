@@ -155,7 +155,8 @@ def test_nothing_in_the_graph_loops_yet_so_the_guard_has_nothing_to_stop() -> No
     short_budget = run(tight, "A request.", verdict("public"), sub_questions=questions)
     long_budget = run(generous, "A request.", verdict("public"), sub_questions=questions)
 
-    assert short_budget["iterations"] == long_budget["iterations"] == 2
+    # Three fixed turns -- dispatch research, decide to draft, finish -- under either budget.
+    assert short_budget["iterations"] == long_budget["iterations"] == 3
 
     # The guard itself still decides correctly; what is missing is a run that reaches it.
     assert route_by_budget({"iterations": 3}, tight) == "finalise"

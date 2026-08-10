@@ -25,6 +25,11 @@ Status: **Phase 3 complete.** Phases 4 to 9 pending.
 | Fan-out width capped before dispatch | **done** | `graph/nodes/researcher.py:cap_fan_out`; `tests/integration/test_fan_out.py` |
 | Fan-out survives a failing branch, visibly | **done** | `graph/subgraphs/retrieval.py`; `graph/nodes/finalise.py:research_gaps` |
 | Compiled subgraph used as a node | **done** | `graph/subgraphs/retrieval.py:build_retrieval_subgraph` |
+| `create_agent` in exactly one worker | **done** | `graph/nodes/drafter.py:draft` |
+| `@tool` with Pydantic arg schemas | **done** | `tools/registry.py` |
+| Per-agent tool allowlist, enforced not documented | **done** | `tools/allowlist.py:AllowlistMiddleware`; `tests/integration/test_tool_allowlist.py` |
+| Tool failures summarised into state, never raised | **done** | `tools/allowlist.py:wrap_tool_call` |
+| Retrieval over the committed corpus | **done** | `retrieval/`; `corpus/` |
 | `InMemorySaver` | **done** | `graph/build.py:checkpointer_for` |
 | `SqliteSaver` | **done** | `graph/build.py:checkpointer_for` |
 | `PostgresSaver` | **done** (wired; server-backed run is Phase 8) | `graph/build.py:checkpointer_for` |

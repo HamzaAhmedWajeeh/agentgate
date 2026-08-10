@@ -25,7 +25,7 @@ from agentgate.graph.state import AgentState
 
 NODE = "supervisor"
 
-Destination = Literal["researcher", "budget_guard"]
+Destination = Literal["researcher", "drafter", "budget_guard"]
 
 
 def supervise(state: AgentState, settings: Settings) -> Command[Destination]:
@@ -47,6 +47,12 @@ def supervise(state: AgentState, settings: Settings) -> Command[Destination]:
     # to start working.
     if outstanding and dispatched == 0:
         goto: Destination = "researcher"
+    elif dispatched and not state.get("draft"):
+        # Research is behind us and there is no deliverable yet. Note that this is reached
+        # even when every branch failed: drafting from nothing produces a document that says
+        # it found nothing, which is a better answer than silence and is the only path on
+        # which the incompleteness gets written down where a reader will see it.
+        goto = "drafter"
     else:
         goto = "budget_guard"
 

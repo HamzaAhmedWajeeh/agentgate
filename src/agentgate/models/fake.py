@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Final
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -30,6 +30,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable, RunnableLambda
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, ValidationError
 
 # Deterministic stand-in for a tokeniser. Four characters per token is roughly right for
@@ -72,6 +73,14 @@ class FakeChatModel(BaseChatModel):
     # Mutable call log. Excluded from equality and serialisation; it is test scaffolding,
     # not model configuration.
     calls: list[list[BaseMessage]] = Field(default_factory=list, exclude=True)
+
+    bound_tools: list[str] = Field(default_factory=list, exclude=True)
+    """Names most recently passed to :meth:`bind_tools`.
+
+    Recorded because "which tools was this model given" is a claim worth being able to check
+    directly. An allowlist that is enforced downstream is still worth binding correctly, and a
+    test that can only observe the enforcement cannot tell the difference between a tool that
+    was withheld and one that was offered and refused."""
 
     @property
     def _llm_type(self) -> str:
@@ -126,6 +135,31 @@ class FakeChatModel(BaseChatModel):
         transcript = "\n".join(f"{m.type}:{m.content}" for m in messages)
         digest = hashlib.sha256(transcript.encode("utf-8")).hexdigest()[:12]
         return f"[{self.model_name}] unscripted reply {digest}"
+
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
+        """Accept a tool binding, record what was bound, and otherwise stay scripted.
+
+        ``BaseChatModel.bind_tools`` raises by default, so without this the fake lane cannot
+        be used with ``create_agent`` at all -- which is how this arrived: the drafter is the
+        first thing here to build an agent, and the model the whole suite runs on could not be
+        given tools.
+
+        The binding does not change what the model replies. Tool *calls* are scripted the same
+        way everything else is, as an ``AIMessage`` carrying ``tool_calls``. That keeps the
+        double honest about the one thing it is for: a test that wants the model to demand an
+        irreversible tool says so explicitly, rather than hoping a real model would.
+        """
+        self.bound_tools = [
+            str(getattr(item, "name", None) or getattr(item, "__name__", None) or item)
+            for item in tools
+        ]
+        return self.bind(tools=list(tools), tool_choice=tool_choice, **kwargs)
 
     def with_structured_output(
         self,

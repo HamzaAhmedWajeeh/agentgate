@@ -99,6 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer in the shape of a whole one. `dispatched` is compared against the outcomes so a
   branch that reports nothing at all is still counted as missing.
 
+- A drafter worker built with `create_agent` — the one prebuilt agent in the system, so the
+  repository shows the fast path as well as the explicit one, and shows what it costs: the
+  model-tool loop is not visible in `build.py`, which is exactly why the allowlist is
+  middleware rather than a list of bound tools.
+- Per-agent tool allowlists enforced in `wrap_tool_call`, between the model's request and the
+  executor. The drafter cannot reach an irreversible tool — not "does not": a model scripted
+  to demand `issue_refund` is refused before the handler runs, and the refusal is an audit
+  event. No part of the enforcement is in a prompt, and a test asserts the prompt stays out of
+  it. Tool failures are summarised back to the model rather than raised.
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the

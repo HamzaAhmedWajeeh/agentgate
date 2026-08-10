@@ -27,6 +27,7 @@ from langgraph.graph.state import CompiledStateGraph
 from agentgate.config import CheckpointerBackend, Settings
 from agentgate.errors import AgentgateError
 from agentgate.graph.nodes.classify import classify
+from agentgate.graph.nodes.drafter import draft
 from agentgate.graph.nodes.finalise import finalise
 from agentgate.graph.nodes.lanes import LANE_NODES, LaneNode
 from agentgate.graph.nodes.researcher import dispatch, research
@@ -105,6 +106,7 @@ def build_graph(
         graph.add_node(name, bound(node))
     graph.add_node("supervisor", partial(supervise, settings=settings))
     graph.add_node("researcher", partial(research, settings=settings))
+    graph.add_node("drafter", partial(draft, settings=settings, model_factory=model_factory))
     graph.add_node(RESEARCH_BRANCH, build_retrieval_subgraph(settings, retriever_factory))
     graph.add_node("budget_guard", _budget_guard)
     graph.add_node("finalise", partial(finalise, settings=settings))
@@ -139,6 +141,8 @@ def build_graph(
     # No edge leaves RESEARCH_BRANCH. Every branch exits by Command(graph=Command.PARENT,
     # goto="supervisor") from inside the subgraph, which is the handoff, and declaring a static
     # edge as well would describe a second path that never runs.
+
+    graph.add_edge("drafter", "supervisor")
 
     graph.add_conditional_edges(
         "budget_guard",

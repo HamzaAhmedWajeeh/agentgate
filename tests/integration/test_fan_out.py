@@ -29,7 +29,7 @@ from langchain_core.documents import Document
 
 from agentgate.config import Settings
 from agentgate.graph.build import build_checkpointer, build_graph
-from agentgate.graph.nodes.finalise import research_gaps
+from agentgate.graph.completeness import research_gaps
 from agentgate.graph.nodes.researcher import BRANCH, dispatch
 from agentgate.graph.state import AgentState, initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
@@ -187,8 +187,9 @@ def test_a_branch_that_reports_nothing_at_all_is_still_counted() -> None:
 
     gaps = research_gaps(state)
 
-    assert gaps["silent"] == 5
-    assert gaps["failed"] == 0, "silent and failed are different losses and are counted apart"
+    assert gaps.silent == 5
+    assert gaps.failed == 0, "silent and failed are different losses and are counted apart"
+    assert gaps.complete is False
 
 
 # ------------------------------------------------------------------ 2. bounded width
@@ -262,6 +263,9 @@ def test_the_fan_in_costs_one_supervisor_turn_no_matter_how_wide() -> None:
     Observed to converge to one. Pinned here because it is a property of LangGraph's
     scheduling rather than of anything in this repository, and an upgrade could change it
     without any of our code moving.
+
+    Three turns, and the count is the point only insofar as it is the *same* three: dispatch
+    research, decide to draft, finish. None of them is "another branch came back".
     """
     settings = settings_with()
     retriever = OneBranchFails(settings, poisoned="nothing matches")
@@ -269,4 +273,4 @@ def test_the_fan_in_costs_one_supervisor_turn_no_matter_how_wide() -> None:
     narrow = run_graph(settings, QUESTIONS[:1], retriever)
     wide = run_graph(settings, QUESTIONS, retriever)
 
-    assert narrow["iterations"] == wide["iterations"] == 2
+    assert narrow["iterations"] == wide["iterations"] == 3

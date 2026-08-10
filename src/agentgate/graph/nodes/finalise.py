@@ -16,43 +16,18 @@ from __future__ import annotations
 
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Settings
+from agentgate.graph.completeness import research_gaps
 from agentgate.graph.routing import budget_exhausted
 from agentgate.graph.state import AgentState
 
 NODE = "finalise"
 
 
-def research_gaps(state: AgentState) -> dict[str, int | list[str]]:
-    """What is missing from the research, if anything.
-
-    Two distinct losses, and they need separate counting because they have different causes:
-
-    *Branches that failed and said so.* A retriever raised, the branch caught it and reported
-    an outcome. Recoverable, visible, and attributable to a question.
-
-    *Branches that never reported at all.* ``dispatched`` says five went out and four outcomes
-    came back. Nothing in the outcomes can tell you this -- you have to compare against what
-    was sent. This is the fan-out's own failure mode: a sequential loop cannot lose an
-    iteration without raising, and a super-step can.
-    """
-    dispatched = state.get("dispatched", 0)
-    outcomes = state.get("research_outcomes", [])
-    failed = [outcome for outcome in outcomes if not outcome.ok]
-
-    return {
-        "dispatched": dispatched,
-        "reported": len(outcomes),
-        "failed": len(failed),
-        "silent": max(0, dispatched - len(outcomes)),
-        "failed_questions": [outcome.question for outcome in failed],
-    }
-
-
 def finalise(state: AgentState, settings: Settings) -> AgentState:
     """Mark the run complete and record the reason, and whether anything is missing."""
     exhausted = budget_exhausted(state, settings)
     gaps = research_gaps(state)
-    complete = gaps["failed"] == 0 and gaps["silent"] == 0
+    complete = gaps.complete
 
     if not complete:
         decided = Decided.FINALISED_INCOMPLETE
@@ -77,7 +52,7 @@ def finalise(state: AgentState, settings: Settings) -> AgentState:
                     "stopped_because": "budget_exhausted" if exhausted else "work_complete",
                     "findings": len(state.get("findings", [])),
                     "answer_complete": complete,
-                    "research": gaps,
+                    "research": gaps.as_detail(),
                 },
             )
         ],
