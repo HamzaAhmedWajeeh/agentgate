@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-from typing import Final
+from typing import Final, Protocol
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
@@ -180,6 +180,21 @@ def unverified_networked_entries() -> list[tuple[Lane, Capability]]:
 # ---------------------------------------------------------------------------------------
 # Model construction
 # ---------------------------------------------------------------------------------------
+
+
+class ModelFactory(Protocol):
+    """How a node obtains a model.
+
+    Exists so a test can script the model a node will use without patching a global or
+    reaching inside the node. The default is :func:`build_model`; the fake lane needs
+    scripting because an unscripted reply is a hash, which is not valid JSON -- and a
+    classifier that cannot parse its own model's output fails closed to `restricted`, which
+    would make every test look like a policy test.
+    """
+
+    def __call__(
+        self, settings: Settings, tier: Tier, call_class: CallClass, *, lane: Lane | None = ...
+    ) -> BaseChatModel: ...
 
 
 def build_model(
