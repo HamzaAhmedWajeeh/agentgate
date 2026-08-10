@@ -16,6 +16,7 @@ import pytest
 
 from agentgate.config import CallClass, CheckpointerBackend, Lane, Settings, Tier
 from agentgate.graph.build import build_checkpointer, build_graph, checkpointer_for
+from agentgate.graph.routing import route_by_budget
 from agentgate.graph.state import initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
 
@@ -126,14 +127,39 @@ def test_an_unparseable_verdict_still_lands_on_the_sovereign_lane() -> None:
 # --------------------------------------------------------------------------- the budget gate
 
 
-def test_the_budget_guard_stops_a_run_that_will_not_stop_itself() -> None:
-    """Seeded with outstanding work so the supervisor keeps going. The guard has to win."""
-    settings = settings_with(max_iterations=3, recursion_limit=40)
+def test_nothing_in_the_graph_loops_yet_so_the_guard_has_nothing_to_stop() -> None:
+    """This test used to prove the guard beat a runaway supervisor. Phase 4 removed the
+    runaway, and pretending otherwise would be worse than recording the gap.
 
-    result = run(settings, "A request.", verdict("public"), sub_questions=["one", "two", "three"])
+    Until Phase 4 the supervisor re-dispatched its outstanding sub-questions on every turn and
+    never cleared them, so a run span until the guard stopped it. That was never a real
+    behaviour -- it was an absent feature that happened to look like a loop. The supervisor now
+    dispatches research once, checks ``dispatched`` rather than inferring from findings, and
+    finalises. Every path through the graph is bounded by construction.
 
-    assert result["iterations"] == 3
-    assert result["audit_trail"][-1]["decided"] == "budget_exceeded"
+    The consequence, stated plainly: ``route_by_budget`` never returns ``"continue"`` in Phase
+    4, so the ``supervisor -> budget_guard -> supervisor`` edge is currently unreachable and
+    the iteration cap has nothing to cap. **The guard is not verified end to end.** It is a
+    backstop for the revision loop in Phase 5 -- reject, revise, return to the gate -- which is
+    the first thing here that can genuinely fail to stop itself.
+
+    What is pinned meanwhile: the decision function is still correct at the boundary, and turn
+    count is independent of the budget, which is what "nothing loops" means in practice. If a
+    future change makes a run's length depend on ``max_iterations`` again, that is a loop
+    arriving, and it should arrive deliberately.
+    """
+    tight = settings_with(max_iterations=3, recursion_limit=40)
+    generous = settings_with(max_iterations=20, recursion_limit=40)
+    questions = ["one", "two", "three"]
+
+    short_budget = run(tight, "A request.", verdict("public"), sub_questions=questions)
+    long_budget = run(generous, "A request.", verdict("public"), sub_questions=questions)
+
+    assert short_budget["iterations"] == long_budget["iterations"] == 2
+
+    # The guard itself still decides correctly; what is missing is a run that reaches it.
+    assert route_by_budget({"iterations": 3}, tight) == "finalise"
+    assert route_by_budget({"iterations": 1}, tight) == "continue"
 
 
 def test_the_budget_guard_trips_before_the_recursion_limit() -> None:

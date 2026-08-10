@@ -86,6 +86,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   embedder that were found by running it — a 70% hash-collision rate at the first dimension
   chosen, and `hash()` being salted per process.
 
+- Research fan-out: the supervisor dispatches sub-questions to a compiled retrieval subgraph
+  with one `Send` per question, and each branch hands its finding back with
+  `Command(graph=Command.PARENT)`. Fan-in is the parent's `operator.add` reducer, so it is a
+  property of the state schema rather than of any collecting code.
+- `AGENTGATE_MAX_FAN_OUT` caps how many branches one dispatch may open, enforced where `Send`
+  objects are constructed. This is the only budget decided before the spending rather than
+  counted after it: the list being fanned out over is model output, so without it the model
+  chooses how many calls get paid for.
+- A branch that fails is caught, recorded, and does not take its siblings down with it, and
+  the run that results is marked `answer_complete: false` rather than presenting a partial
+  answer in the shape of a whole one. `dispatched` is compared against the outcomes so a
+  branch that reports nothing at all is still counted as missing.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
