@@ -121,6 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pytest subprocess that were not declared settings, and the unknown-variable guard rejected
   them, so every live case failed at configuration before reaching a provider. Both are
   declared settings now. Recorded as item 7 of the leak inventory in ADR 0004.
+- The retrieval corpus was not copied into the container image. The runtime stage ships the
+  virtualenv, which covers code and not data, so every research branch would have failed
+  inside the container while every offline test passed — the suite runs from a checkout where
+  `corpus/` is simply there. Copied now, and pinned by a static check of the runtime stage.
 - `AGENTGATE_LIVE_SPEND_ABORT_USD` was computed, printed, and read by nothing. It now bounds
   the suite while it runs, rather than only being compared against the total afterwards.
 
