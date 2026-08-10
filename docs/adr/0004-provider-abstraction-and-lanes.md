@@ -156,7 +156,17 @@ a row that stops being true fails the build instead of quietly rotting.
 | **Consequence** | Stated in `.env.example` next to the token ceiling rather than left for someone to discover from a bill. Closing it means either accounting embedding usage into the ledger or declaring the corpus index a build-time cost outside the run budget — a real decision, not a patch, and it belongs with the guardrails work in Phase 5 rather than being improvised here. Until then no claim is made that the ceilings bound total spend; they bound *chat* spend. |
 | **Recorded** | Here, and in `.env.example`. Open. |
 
-### 10. Not measured yet, and therefore not claimed
+### 10. A checkpoint notice that no configuration can turn into an error, and a flag that makes it worse
+
+| | |
+| --- | --- |
+| **Difference** | Resuming a run logs `Deserializing unregistered type ... This will be blocked in a future version` for every custom type in state. Three plausible ways to promote it to a failure, and none of them does: it is **not a Python warning**, so `filterwarnings` cannot see it; it is **not printed**, so `capsys` cannot either — it is a `logging` record from `langgraph.checkpoint.serde.jsonplus`; and `LANGGRAPH_STRICT_MSGPACK=true` does **not raise**, it blocks the value and continues. |
+| **How established** | Run, on 2026-08-10. `warnings.catch_warnings(record=True)` around a full run and resume returned `warnings caught: 0` while the line still appeared. Under `LANGGRAPH_STRICT_MSGPACK=true` the run completed normally, printing `Blocked deserialization of agentgate.graph.state.Finding`. |
+| **Evidence** | `tests/integration/test_checkpoint_serialisation.py::test_a_real_run_never_logs_the_deserialisation_notice`, guarded by `::test_that_check_would_actually_notice`, which puts a custom type in a channel on purpose and asserts the notice appears. The guard is not decoration: it is what caught the `capsys` version passing against an empty capture. |
+| **Consequence** | Two separate lessons. First, a `filterwarnings` entry was written, verified to enforce nothing, and **removed** — the absence is now a comment in `pyproject.toml` explaining why, because a rule that reads as enforcement and enforces nothing is worse than no rule. Second, and worth stating on its own: **`LANGGRAPH_STRICT_MSGPACK=true` is a control that makes things worse when enabled.** It converts a visible notice into a silent data loss — the value is dropped and the run carries on — so someone who turns it on believing it hardens the system has made a resume fail quietly instead of loudly. Do not set it. The real fix is ADR 0011: keep custom types out of channels, and enforce that with a walk over a real run's channels that depends on no framework behaviour at all. |
+| **Recorded** | Here and in ADR 0011. Version-specific: re-check on any LangGraph upgrade, including whether the flag has learned to raise. |
+
+### 11. Not measured yet, and therefore not claimed
 
 These are absent from the capability matrix on purpose. An absent row means "nobody asked",
 which `supports()` reads as unsupported — the pessimistic direction, where being wrong costs

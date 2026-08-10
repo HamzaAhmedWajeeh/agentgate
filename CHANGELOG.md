@@ -132,6 +132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boundaries. Recorded in ADR 0011, including why registering the types was the wrong half of
   the problem to solve and why the pytest configuration this was meant to use does not exist.
 
+- Recorded, not fixed: `LANGGRAPH_STRICT_MSGPACK=true` is a control that makes things worse
+  when enabled. It does not raise on an unregistered type in a checkpoint — it drops the value
+  and lets the run continue, turning a visible notice into silent data loss. ADR 0004, item 10.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
