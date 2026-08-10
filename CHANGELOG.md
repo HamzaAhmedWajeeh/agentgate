@@ -69,7 +69,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make measure` derives the token ceiling from an instrumented run; the spend ceilings follow
   from that budget priced at the configured table. Both bases are recorded in `.env.example`.
 
+- The live suite has its own token and spend ceilings, on their own basis: the gatekeeper's
+  estimate times the tolerance, which is the bound it already applies to dollars, applied to
+  tokens as well. A suite is not a run, and charging it to a per-run budget aborts it for
+  being a suite. `make test-live` now prints estimated against actual tokens alongside
+  dollars, so the figure the ceiling rests on stays observed.
+### Fixed
+
+- `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
+  pytest subprocess that were not declared settings, and the unknown-variable guard rejected
+  them, so every live case failed at configuration before reaching a provider. Both are
+  declared settings now. Recorded as item 7 of the leak inventory in ADR 0004.
+- `AGENTGATE_LIVE_SPEND_ABORT_USD` was computed, printed, and read by nothing. It now bounds
+  the suite while it runs, rather than only being compared against the total afterwards.
+
 ### Changed
+
+- `SpendLedger` requires the ceilings it enforces rather than reading the run ceilings off
+  configuration. A ledger that inferred its own scope is how the live suite came to be
+  measured against a per-run budget. See item 8 of the leak inventory in ADR 0004.
 
 - Configuration tolerates unrelated keys in a shared `.env` rather than rejecting them.
   Typo protection for the `AGENTGATE_` namespace is unchanged and remains stricter than

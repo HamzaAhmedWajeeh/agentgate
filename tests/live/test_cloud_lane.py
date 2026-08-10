@@ -21,12 +21,15 @@ unfalsifiable, and a record nothing checks goes stale the first time a provider 
 
 Every call records into a ledger the gatekeeper reads. A case that spends without recording
 would make the enforcement blind, so the fixture records unconditionally.
+
+The ledger is bounded by the suite's own ceilings, never the run ceilings. Six independent
+cases are not a request through the graph, and charging them to a per-run budget would abort
+the suite for being a suite.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -35,7 +38,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from agentgate.config import CallClass, Lane, Settings, Tier, get_settings
-from agentgate.guardrails.spend import SpendLedger
+from agentgate.guardrails.spend import Ceilings, SpendLedger
 from agentgate.models.registry import (
     Capability,
     build_model,
@@ -69,14 +72,17 @@ def settings() -> Settings:
 def ledger(settings: Settings) -> Iterator[SpendLedger]:
     """Accumulate spend and write it where the gatekeeper can read it.
 
+    Bounded by ``Ceilings.for_live_suite``, which is the whole point of the fixture existing:
+    the suite is accounted on its own basis, and the run ceilings are left to bound runs.
+
     Written on teardown even if a test fails: an aborted run still spent what it spent, and a
     ledger that only recorded successful runs would understate exactly the case worth catching.
     """
-    book = SpendLedger(settings)
+    book = SpendLedger(settings, Ceilings.for_live_suite(settings))
     try:
         yield book
     finally:
-        destination = os.environ.get("AGENTGATE_LIVE_SPEND_LEDGER")
+        destination = settings.live_spend_ledger
         if destination:
             path = Path(destination)
             path.parent.mkdir(parents=True, exist_ok=True)

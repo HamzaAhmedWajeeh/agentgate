@@ -40,6 +40,14 @@ ESTIMATED_CALLS: Final = 15
 ESTIMATED_INPUT_TOKENS_PER_CALL: Final = 400
 ESTIMATED_OUTPUT_TOKENS_PER_CALL: Final = 150
 
+# What those constants imply in tokens. AGENTGATE_MAX_LIVE_SUITE_TOKENS is this times the
+# tolerance, and a unit test recomputes it from here -- so a change to the suite that is not
+# carried through to the ceiling fails the build rather than leaving the ceiling describing a
+# suite that no longer exists.
+ESTIMATED_TOKENS: Final = ESTIMATED_CALLS * (
+    ESTIMATED_INPUT_TOKENS_PER_CALL + ESTIMATED_OUTPUT_TOKENS_PER_CALL
+)
+
 LEDGER_PATH: Final = Path("data/live-spend.json")
 CONFIRMATION = "yes"
 
@@ -76,12 +84,23 @@ def render_plan(settings: Settings, estimate: float, tolerance: float) -> str:
             f"    cheap tier      {settings.model_for(Tier.CHEAP)}",
             f"    capable tier    {settings.model_for(Tier.CAPABLE)}",
             f"    calls (est.)    {ESTIMATED_CALLS}",
+            f"    tokens (est.)   {ESTIMATED_TOKENS}",
             f"    cost  (est.)    ${estimate:.4f}",
             "",
             (
                 f"    Hard abort if actual exceeds ${estimate * tolerance:.4f} "
                 f"({tolerance:g}x the estimate)."
             ),
+            (
+                f"    Suite ceiling   {settings.max_live_suite_tokens} tokens / "
+                f"${settings.max_live_suite_spend_usd:.4f}"
+            ),
+            "",
+            (
+                "    The run and session ceilings below bound one request through the graph. "
+                "They do not"
+            ),
+            "    apply here: a suite is not a run.",
             f"    Run ceiling     ${settings.max_spend_usd:.4f}",
             f"    Session ceiling ${settings.max_session_spend_usd:.4f}",
             "",
@@ -157,8 +176,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911
         check=False,
     )
 
-    actual = read_actual_spend()
-    print(render_outcome(estimate, actual, tolerance))
+    actual, actual_tokens = read_actual()
+    print(render_outcome(estimate, actual, actual_tokens, tolerance))
 
     if actual > estimate * tolerance:
         print(
@@ -170,18 +189,26 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0911
     return completed.returncode
 
 
-def read_actual_spend() -> float:
-    """Total spend recorded by the live suite, or 0.0 if it recorded nothing."""
+def read_actual() -> tuple[float, int]:
+    """Spend and tokens recorded by the live suite, or zeroes if it recorded nothing."""
     if not LEDGER_PATH.exists():
-        return 0.0
+        return 0.0, 0
     try:
-        return float(json.loads(LEDGER_PATH.read_text(encoding="utf-8"))["total_usd"])
+        recorded = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+        return float(recorded["total_usd"]), int(recorded["total_tokens"])
     except (ValueError, KeyError):
-        return 0.0
+        return 0.0, 0
 
 
-def render_outcome(estimate: float, actual: float, tolerance: float) -> str:
+def render_outcome(estimate: float, actual: float, actual_tokens: int, tolerance: float) -> str:
+    """Estimated against actual, in both units.
+
+    Tokens are shown alongside dollars because the suite ceiling is derived from the token
+    estimate. Printing only the money would leave the figure the ceiling rests on unobserved,
+    free to drift until the day it rejects a suite that was behaving normally.
+    """
     ratio = (actual / estimate) if estimate else 0.0
+    token_ratio = (actual_tokens / ESTIMATED_TOKENS) if ESTIMATED_TOKENS else 0.0
     return "\n".join(
         [
             "",
@@ -190,9 +217,15 @@ def render_outcome(estimate: float, actual: float, tolerance: float) -> str:
             f"    actual      ${actual:.4f}",
             f"    ratio       {ratio:.2f}x  (abort above {tolerance:g}x)",
             "",
+            "  Tokens",
+            f"    estimated   {ESTIMATED_TOKENS}",
+            f"    actual      {actual_tokens}",
+            f"    ratio       {token_ratio:.2f}x",
+            "",
             (
-                "  If the ratio is consistently far from 1.0, correct the constants at the "
-                "top of scripts/run_live.py rather than widening the tolerance."
+                "  If either ratio is consistently far from 1.0, correct the constants at the "
+                "top of scripts/run_live.py and re-derive AGENTGATE_MAX_LIVE_SUITE_TOKENS from "
+                "them, rather than widening the tolerance."
             ),
             "",
         ]
