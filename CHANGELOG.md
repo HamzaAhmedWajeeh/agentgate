@@ -108,6 +108,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to demand `issue_refund` is refused before the handler runs, and the refusal is an audit
   event. No part of the enforcement is in a prompt, and a test asserts the prompt stays out of
   it. Tool failures are summarised back to the model rather than raised.
+- Ceilings re-derived now that fan-out exists: `AGENTGATE_MAX_TOTAL_TOKENS` moves from 2,370 to
+  19,200, from a measured heaviest run of 1,920 tokens at the fan-out limit. Spend ceilings
+  follow. The Phase 3 note predicted the old ceiling would reject every Phase 4 run; it would
+  not have, and what it recorded instead is in `.env.example`.
+- Recorded, not fixed: the spend guard accounts chat-model usage and cannot see embedding
+  spend, which is free on the fake lane and real on the cloud lane. ADR 0004, item 9.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the

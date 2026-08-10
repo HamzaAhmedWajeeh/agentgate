@@ -34,13 +34,18 @@ HEADROOM: Final = 10
 # Representative requests rather than one. A single sample measures that sample; the ceiling
 # has to cover the spread, so the largest run is what it is derived from.
 SAMPLES: Final = [
-    ("a short public request", "Summarise our refund policy in two sentences."),
+    ("a short public request", "Summarise our refund policy in two sentences.", []),
     (
         "an involved internal request",
         (
             "Compare our refund policy against the three most common customer complaints "
             "from last quarter and identify where the policy and complaints disagree."
         ),
+        [
+            "refund policy eligibility window",
+            "most common customer complaint categories",
+            "complaints root cause linkage to incidents",
+        ],
     ),
     (
         "a restricted request",
@@ -48,8 +53,39 @@ SAMPLES: Final = [
             "Draft a response to the regulator about the incident affecting account 4471, "
             "including the remediation timeline and the affected customer count."
         ),
+        [
+            "regulator notification deadline for personal data",
+            "incident severity levels and declaration",
+            "post-incident review contents",
+            "data retention access logging",
+        ],
+    ),
+    # The ceiling has to cover the widest thing the graph can legally do, and that is not any
+    # particular request -- it is a request whose sub-questions saturate the fan-out. Anything
+    # narrower measures a typical run and leaves the ceiling below the worst legal one.
+    (
+        "a request at the fan-out limit",
+        (
+            "Produce a full compliance review covering refunds, complaints, incidents, "
+            "retention, and access logging, with the gaps between them called out."
+        ),
+        [
+            "refund policy escalation and second approver",
+            "complaint acknowledgement and substantive response deadlines",
+            "incident severity one regulator notification",
+            "transaction and authentication log retention periods",
+            "access logging of restricted records",
+            "backup retention and erasure limits",
+            "prorated partial refunds",
+            "post-incident review timeline",
+        ],
     ),
 ]
+
+DRAFT = (
+    "The refund window and the complaint response deadline disagree on timing; the gap is "
+    "documented below with the sections it comes from."
+)
 
 CLASSIFICATIONS = {
     "a short public request": {
@@ -70,6 +106,12 @@ CLASSIFICATIONS = {
         "contains_pii": True,
         "reason": "identifies an account and a regulator matter",
     },
+    "a request at the fan-out limit": {
+        "sensitivity": "internal",
+        "complexity": "involved",
+        "contains_pii": False,
+        "reason": "broad review across every policy area",
+    },
 }
 
 
@@ -85,7 +127,7 @@ class Measured:
         return self.input_tokens + self.output_tokens
 
 
-def measure(settings: Settings, label: str, request: str) -> Measured:
+def measure(settings: Settings, label: str, request: str, sub_questions: list[str]) -> Measured:
     """Run the graph once and total the usage every model call reported."""
     seen: list[AIMessage] = []
     verdict = scripted_json(CLASSIFICATIONS[label])
@@ -93,7 +135,7 @@ def measure(settings: Settings, label: str, request: str) -> Measured:
     def recording_factory(
         _settings: Settings,
         _tier: Tier,
-        _call_class: CallClass,
+        call_class: CallClass,
         *,
         lane: Lane | None = None,  # noqa: ARG001 - part of the ModelFactory signature
     ) -> FakeChatModel:
@@ -103,11 +145,19 @@ def measure(settings: Settings, label: str, request: str) -> Measured:
                 seen.append(result.generations[0].message)
                 return result
 
+        # The drafter is the expensive call and it is the one whose prompt grows with the
+        # fan-out: every finding from every branch is in it. Scripting a short reply keeps the
+        # *output* honest-but-small while the input carries the real weight, which is the
+        # right way round -- output length is a configured ceiling, input length is not.
+        if call_class is CallClass.SYNTHESIS:
+            return Recording(responses=[DRAFT])
         return Recording(responses=[verdict])
 
     graph = build_graph(settings, build_checkpointer(settings), model_factory=recording_factory)
+    state = initial_state(request, str(uuid.uuid4()))
+    state["sub_questions"] = sub_questions
     graph.invoke(
-        initial_state(request, str(uuid.uuid4())),
+        state,
         {
             "configurable": {"thread_id": str(uuid.uuid4())},
             "recursion_limit": settings.recursion_limit,
@@ -130,7 +180,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
-    results = [measure(settings, label, request) for label, request in SAMPLES]
+    results = [
+        measure(settings, label, request, questions) for label, request, questions in SAMPLES
+    ]
 
     print("\n  Measured on the fake lane. No network, no cost.\n")
     print(f"  {'sample':<32} {'calls':>6} {'in':>8} {'out':>8} {'total':>8}")
@@ -151,9 +203,11 @@ def main(argv: list[str] | None = None) -> int:
         f"{heaviest.output_tokens * HEADROOM} * O) / 1e6\n"
     )
     print(
-        "  CAVEAT, and it matters: the graph currently makes one model call per run. Workers\n"
-        "  arrive in Phase 4 and will multiply this severalfold. Re-run this script at the end\n"
-        "  of that phase -- a ceiling derived today would reject every Phase 4 run.\n"
+        f"  The heaviest sample saturates the fan-out at AGENTGATE_MAX_FAN_OUT="
+        f"{settings.max_fan_out}. That is deliberate: the ceiling has to cover the widest run\n"
+        "  the graph will legally perform, not a typical one. Re-derive after any change to\n"
+        "  the fan-out limit, the retrieval top-k, or the number of model calls per run --\n"
+        "  each of those moves the worst case, and this number is only as good as its date.\n"
     )
     return EXIT_OK
 
