@@ -54,23 +54,37 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
 - Budget gates on iterations, tokens, and fan-out width. The width cap is the only one decided
   before the spending rather than counted after it, because the list being fanned out over is
   model output.
-- An append-only audit trail in graph state, recording what decided, what it decided, and on
-  what input hash — never on the input itself.
+- An append-only audit trail on disk as JSON lines, recording what decided, what it decided,
+  and on what input hash — never the input itself. Readable with the standard library alone,
+  which is asserted rather than claimed, because a record only this system can decode would
+  support a weaker statement than the one being made.
+- No gate decides silently, and that is enforced by discovery: the gates are enumerated from
+  the code and each must have written an event, so one added later without an audit event fails
+  the build.
+- An output check on citation provenance — every source the draft cites must be one research
+  actually returned. Exact rather than heuristic, and it cannot see an uncited fabrication.
+- Embedding spend goes through the same ledger as chat spend, on the same rules: usage-or-error,
+  an unpriced model refuses to start, recorded per model.
 
 **Not built.** Long-term memory and time travel, the FastAPI and CLI surfaces, streaming,
 structlog/OpenTelemetry/Prometheus instrumentation, and the eval suite. `docs/concept-map.md`
 lists every concept and marks each one built or not built; a row there describes the repository
 as it is today.
 
-**Built but not yet wired.** The spend ledger enforces run and session ceilings and is exercised
-by the live suite, but nothing in the graph accounts against it yet. Until it is, the token and
-spend ceilings bound what `make measure` derives rather than what a run actually consumes.
+**Built but not yet wired.** The spend ledger enforces run and session ceilings, and the
+embedding path accounts against it, but the chat calls in the graph do not yet. Until they do,
+the run and session ceilings bound embedding spend and what `make measure` derives, not what a
+run's model calls actually consume.
 
-**Not accounted at all.** Embedding calls. The ledger reads chat-model usage metadata, and
-embeddings do not produce it, so on the cloud lane indexing and querying the corpus costs money
-no ceiling here can see. Recorded as item 9 of the leak inventory in
-[ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md); the decision is that the run budget
-means all spend, and the code has not caught up with it.
+**Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
+an inventory of every place something claimed one thing and did another — twelve entries, each
+established by running something rather than by reading it, each pinned by a test. It says
+plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
+exercised. It is the most honest document here.
+
+**A run that never finishes leaves its trail in the checkpoint, not in the log.** One paused at
+the approval gate, or one that died mid-flight. The events are recoverable rather than lost,
+since the checkpoint holds them, but the file will not have them.
 
 **Deferred verification.** The sovereign lane is exercised against the committed stub server
 over real HTTP. Ollama and vLLM are the intended targets and neither has been run against yet,
