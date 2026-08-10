@@ -125,6 +125,9 @@ no cost. Switching to a real provider is an explicit edit, described in the file
 | `make test-cov` | The offline suite with a coverage report |
 | `make test-live` | Run against real providers. Costs money. |
 | `make config` | Print the resolved configuration, secrets redacted |
+| `make seed` | Index the committed corpus and show what sample queries retrieve |
+| `make measure` | Measure a full run and derive the token and spend ceilings from it |
+| `make models` | List the model identifiers a key can reach, with a zeroed price table |
 | `make audit` | Check dependencies for known vulnerabilities |
 | `make docker-build` | Build the container image |
 | `make docker-up` | Start the local stack |
