@@ -4,7 +4,7 @@ Every model reply carries ``usage_metadata``. This adds it up and prices it, so 
 be enforced against what was actually consumed rather than against an estimate made before the
 run started.
 
-Two properties matter more than the arithmetic:
+Three properties matter more than the arithmetic:
 
 *A reply with no usage is an error, not a zero.* A provider that stops reporting usage would
 otherwise make every run look free and no ceiling would ever be reached -- the same silent
@@ -12,6 +12,11 @@ disarming that an unpriced model would cause, arriving by a different route.
 
 *Ceilings are checked, not observed.* :meth:`SpendLedger.check` raises. A ledger that merely
 recorded a number and left enforcement to a caller who might forget is decoration.
+
+*A ledger says which ceilings it enforces.* :class:`Ceilings` is a required argument, not a
+default read off ``Settings``. Reading the run ceilings implicitly made every ledger a run
+ledger, including the live suite's -- which is not a run, and tripped on being a suite rather
+than on anything being wrong.
 """
 
 from __future__ import annotations
@@ -79,18 +84,64 @@ def usage_of(reply: AIMessage) -> Usage:
     )
 
 
+@dataclass(frozen=True)
+class Ceilings:
+    """The limits one ledger enforces, and the name a breach is reported under.
+
+    Named at construction rather than read off ``Settings`` inside :meth:`SpendLedger.check`,
+    because two different things get accounted here and they are not interchangeable:
+
+    *A run* is one request through the graph. Its ceiling exists to catch a runaway inside that
+    request -- a loop, a fan-out that will not converge.
+
+    *The live suite* is several independent cases sharing one book so that the total is visible
+    and the gatekeeper can read it. Nothing about it is a run. Measured against a per-run
+    ceiling it trips on being a suite, which reports a budget failure where there is none and
+    teaches whoever sees it to raise the run ceiling -- weakening the guard that was working.
+    """
+
+    scope: str
+    """What is being accounted. Appears in the error, suffixed ``_tokens`` for a token breach,
+    so an abort says which of the two ceilings stopped it."""
+
+    max_total_tokens: int
+    max_spend_usd: float
+
+    @classmethod
+    def for_run(cls, settings: Settings) -> Ceilings:
+        """One request through the graph."""
+        return cls("run", settings.max_total_tokens, settings.max_spend_usd)
+
+    @classmethod
+    def for_live_suite(cls, settings: Settings) -> Ceilings:
+        """One complete live suite, bounded on its own basis.
+
+        Tightened to ``live_spend_abort_usd`` when the gatekeeper set it. That figure is the
+        estimate the operator was shown times the tolerance -- the number they actually
+        consented to, and the smaller one whenever the gatekeeper is what launched this.
+        """
+        spend = settings.max_live_suite_spend_usd
+        if settings.live_spend_abort_usd is not None:
+            spend = min(spend, settings.live_spend_abort_usd)
+        return cls("live_suite", settings.max_live_suite_tokens, spend)
+
+
 @dataclass
 class SpendLedger:
-    """Running total for one run, optionally rolling up into a session total.
+    """Running total for one scope of accounting, optionally rolling up into a session total.
 
     Args:
-        settings: Supplies the prices and the ceilings.
+        settings: Supplies the prices.
+        ceilings: What this ledger is accounting and the limits that apply to it. Required:
+            a ledger that inferred its own ceilings is how the live suite came to be measured
+            against a per-run budget.
         session: A parent ledger accumulating across runs. A loop of individually cheap runs
             is invisible to any per-run ceiling, so the session total is not optional
             bookkeeping -- it is the only thing that bounds that shape of failure.
     """
 
     settings: Settings
+    ceilings: Ceilings
     session: SpendLedger | None = None
 
     usage_by_model: dict[str, Usage] = field(default_factory=dict)
@@ -128,26 +179,31 @@ class SpendLedger:
         Raises:
             SpendCeilingExceededError: naming which ceiling and by how much.
         """
-        if self.total_tokens > self.settings.max_total_tokens:
+        limits = self.ceilings
+
+        if self.total_tokens > limits.max_total_tokens:
             msg = (
-                f"run consumed {self.total_tokens} tokens, over the ceiling of "
-                f"{self.settings.max_total_tokens}"
+                f"{limits.scope} consumed {self.total_tokens} tokens, over the ceiling of "
+                f"{limits.max_total_tokens}"
             )
             raise SpendCeilingExceededError(
                 msg,
                 spent_usd=self.total_usd,
-                ceiling_usd=self.settings.max_spend_usd,
-                scope="run_tokens",
+                ceiling_usd=limits.max_spend_usd,
+                scope=f"{limits.scope}_tokens",
             )
 
         spent = self.total_usd
-        if spent > self.settings.max_spend_usd:
-            msg = f"run spent ${spent:.4f}, over the ceiling of ${self.settings.max_spend_usd:.4f}"
+        if spent > limits.max_spend_usd:
+            msg = (
+                f"{limits.scope} spent ${spent:.4f}, over the ceiling of "
+                f"${limits.max_spend_usd:.4f}"
+            )
             raise SpendCeilingExceededError(
                 msg,
                 spent_usd=spent,
-                ceiling_usd=self.settings.max_spend_usd,
-                scope="run",
+                ceiling_usd=limits.max_spend_usd,
+                scope=limits.scope,
             )
 
         if self.session is not None:

@@ -113,17 +113,22 @@ def test_the_sovereign_lane_is_recorded_as_lacking_native_structured_output() ->
     assert observation.provenance is Provenance.STUB
 
 
-def test_the_cloud_lane_is_absent_until_probed() -> None:
-    """Nothing is known about what a given key can do until it has been asked.
+def test_the_cloud_lane_row_came_from_a_live_probe() -> None:
+    """The row exists now, and how it got here is the part worth pinning.
 
-    An optimistic default here would be the assumption the whole design rejects.
+    It was absent until 2026-08-10 because nothing is known about what a given key can do
+    until it has been asked. What replaced the absence has to be an observation, not an
+    optimistic default -- so this asserts the provenance, not the answer.
     """
-    assert observation_for(Lane.CLOUD, Capability.NATIVE_STRUCTURED_OUTPUT) is None
+    observation = observation_for(Lane.CLOUD, Capability.NATIVE_STRUCTURED_OUTPUT)
+
+    assert observation is not None
+    assert observation.provenance is Provenance.LIVE_PROBE
 
 
 def test_an_unmeasured_capability_reads_as_unsupported() -> None:
     """Pessimistic by design: the fallback costs tokens, the optimistic error costs a run."""
-    assert supports(Lane.CLOUD, Capability.NATIVE_STRUCTURED_OUTPUT) is False
+    assert supports(Lane.CLOUD, Capability.STREAMING) is False
     assert supports(Lane.SOVEREIGN, Capability.STREAMING) is False
 
 

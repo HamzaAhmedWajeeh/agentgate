@@ -270,6 +270,53 @@ class Settings(BaseSettings):
     guess and a threshold at exactly the guess would abort on rounding.
     """
 
+    # ---------------------------------------------------------------- the live suite
+    #
+    # A suite is not a run. Its cases are independent, they share one book only so the total is
+    # visible, and accounting them against ``max_total_tokens`` measures the wrong thing: the
+    # suite trips for being a suite, and the obvious fix -- raising the run ceiling -- weakens
+    # the guard that was working. So the suite gets its own ceilings, on their own basis.
+
+    max_live_suite_tokens: Positive = 24_750
+    """Token ceiling for one complete live suite.
+
+    DERIVED, not chosen: the estimate at the top of ``scripts/run_live.py`` (15 calls at 400
+    input and 150 output apiece, so 8,250 tokens) times ``live_spend_tolerance`` of 3. The same
+    basis as the dollar abort the gatekeeper already computes, because it is bounding the same
+    thing by the other unit.
+
+    ``tests/unit/test_live_suite_ceilings.py`` recomputes this from those constants, so editing
+    the estimate without re-deriving the ceiling fails the build rather than leaving a ceiling
+    describing a suite that no longer exists.
+    """
+
+    max_live_suite_spend_usd: PositiveFloat = 0.005
+    """Dollar ceiling for one complete live suite.
+
+    Derived from the token budget above the same way ``max_spend_usd`` is derived from
+    ``max_total_tokens``: 18,000 input and 6,750 output priced at the $0.10 / $0.40 per million
+    used throughout ``.env.example`` comes to $0.0045, rounded up so rounding alone cannot trip
+    it.
+    """
+
+    live_spend_ledger: Path | None = None
+    """Where the live suite writes what it spent, for the gatekeeper to read back.
+
+    Set by ``scripts/run_live.py`` on the subprocess it launches; unset otherwise, and the
+    suite then records nothing to disk. Declared here rather than read from ``os.environ``
+    because the namespace guard rejects every unrecognised ``AGENTGATE_*`` variable -- which,
+    until this field existed, included the two the gatekeeper set itself.
+    """
+
+    live_spend_abort_usd: PositiveFloat | None = None
+    """Per-invocation dollar ceiling injected by the gatekeeper: the estimate it printed times
+    the tolerance.
+
+    Tightens ``max_live_suite_spend_usd`` when present, so the suite aborts mid-flight against
+    the figure the operator consented to instead of only being told about it once the money was
+    already gone.
+    """
+
     recursion_limit: Positive = 40
     """LangGraph's own super-step ceiling. A backstop behind ``max_iterations``, not a
     substitute for it: hitting this one is a bug, hitting the other one is a policy."""

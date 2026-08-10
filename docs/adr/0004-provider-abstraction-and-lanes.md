@@ -126,7 +126,27 @@ a row that stops being true fails the build instead of quietly rotting.
 | **Consequence** | Every unprefixed read is now an explicit `AliasChoices`, and the permitted set is asserted against the model so widening it is deliberate. |
 | **Recorded** | ADR 0009. |
 
-### 7. Not measured yet, and therefore not claimed
+### 7. The gatekeeper's own environment stopped the suite it was guarding
+
+| | |
+| --- | --- |
+| **Difference** | `scripts/run_live.py` sets `AGENTGATE_LIVE_SPEND_LEDGER` and `AGENTGATE_LIVE_SPEND_ABORT_USD` on the pytest subprocess it launches. Neither was a declared setting, and the unknown-variable guard from item 5 rejects any unrecognised `AGENTGATE_*` name. Every live case died at `get_settings()`, before spending anything and before proving anything. |
+| **How established** | Run, on 2026-08-10: constructing `Settings` under exactly the environment the gatekeeper builds returned `ConfigurationError: AGENTGATE_LIVE_SPEND_ABORT_USD ... is not a known setting, did you mean AGENTGATE_MAX_SPEND_USD?` |
+| **Evidence** | `tests/unit/test_live_suite_ceilings.py::test_every_variable_the_gatekeeper_injects_is_a_declared_setting`, which reads the injected names out of the script rather than restating them, guarded by `::test_the_gatekeeper_injects_something_at_all` so an empty match cannot pass vacuously. `::test_the_suite_starts_under_the_environment_the_gatekeeper_builds` constructs the settings rather than comparing name sets. |
+| **Consequence** | Both are declared settings now, which makes them legal, typed, and documented in `.env.example`. The wider lesson is that two correct mechanisms can be jointly wrong: the guard was right to reject unknown names and the gatekeeper was right to pass configuration by environment, and nothing owned the interaction. It survived because the live suite is deselected by default — the only code here that CI cannot exercise, and therefore the only code where "it has never been run" and "it passes" look identical. |
+| **Recorded** | Here. `AGENTGATE_LIVE_SPEND_ABORT_USD` is also now read rather than merely set — see item 8. |
+
+### 8. A test suite accounted against a per-run ceiling
+
+| | |
+| --- | --- |
+| **Difference** | The live suite's ledger enforced `max_total_tokens` and `max_spend_usd`, which bound one request through the graph. The suite is six independent cases sharing one book so the total is visible to the gatekeeper. Six cases at roughly 250 tokens each against a 2,370-token run ceiling is most of the budget spent on being a suite. |
+| **How established** | Read off the arithmetic once the run ceiling was derived from measurement in Phase 3, and confirmed by construction: `SpendLedger` took its ceilings off `Settings` inside `check()`, so every ledger was a run ledger whether or not it was accounting a run. |
+| **Evidence** | `tests/unit/test_spend.py::test_the_live_suite_is_not_accounted_against_the_run_ceiling` and `::test_the_live_suite_trips_its_own_token_ceiling` — the separation must not disarm the guard, only re-scope it. `tests/unit/test_live_suite_ceilings.py::test_the_suite_token_ceiling_is_still_the_estimate_times_the_tolerance` recomputes the ceiling from the estimate it was derived from. |
+| **Consequence** | `Ceilings` is a required argument to `SpendLedger`, so a ledger has to say what it is accounting. The suite's ceiling has its own basis — the gatekeeper's estimate times the tolerance, the same bound as the dollar abort in the other unit — and `make test-live` now prints estimated against actual tokens as well as dollars, so the figure the ceiling rests on is observed rather than assumed. `AGENTGATE_LIVE_SPEND_ABORT_USD` tightens it, which is the first time that value has been enforced during a suite rather than reported after one. |
+| **Recorded** | `.env.example`, next to the run ceilings it is deliberately not part of. The failure mode worth naming: charged against the wrong ceiling, the suite aborts for being a suite, and the obvious remedy is to raise the run ceiling — weakening the guard that was working. |
+
+### 9. Not measured yet, and therefore not claimed
 
 These are absent from the capability matrix on purpose. An absent row means "nobody asked",
 which `supports()` reads as unsupported — the pessimistic direction, where being wrong costs
@@ -134,10 +154,14 @@ some tokens on a fallback rather than a provider exception in a node that cannot
 
 | Gap | What would close it |
 | --- | --- |
-| `(CLOUD, NATIVE_STRUCTURED_OUTPUT)` | `test_whether_the_cloud_lane_supports_native_structured_output` in the live suite. It exists and reports the answer; nobody has run it. |
 | Tool calling, on any lane | Phase 4, when tools exist. |
 | Streaming, on any lane | Phase 7, when the SSE surface exists. |
 | Ollama and vLLM behaviour | Neither has been run against. The stub stands in for the shape, not for a specific server. |
+
+`(CLOUD, NATIVE_STRUCTURED_OUTPUT)` left this table on 2026-08-10. `scripts/probe_capabilities.py`
+was run against a real key and observed the native path returning a valid object with no
+post-processing, so the row is recorded as `supported: True, provenance: LIVE_PROBE` and the
+live suite now enforces it. The gap closed the way every gap here is meant to: by asking.
 
 **This inventory is incomplete, and it grows by measurement.** Every entry above exists because
 something was run and produced a surprising answer, which means the ones not yet found are the
