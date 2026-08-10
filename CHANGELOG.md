@@ -77,6 +77,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The cloud lane's first capability-matrix row, from a live probe against a real key on
   2026-08-10: native structured output is supported. The live suite enforces the row.
 
+- A committed corpus of four synthetic documents describing an organisation that does not
+  exist, chunked on Markdown headings because a heading is the author's own statement about
+  where one idea ends. `make seed` indexes it and prints what sample queries retrieve.
+- Dense in-process retrieval: embeddings chosen by lane like models, an exhaustive cosine
+  search written rather than imported, and Qdrant declared in configuration but raising rather
+  than silently falling back. Recorded in ADR 0010, including the two things about the offline
+  embedder that were found by running it — a 70% hash-collision rate at the first dimension
+  chosen, and `hash()` being salted per process.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
