@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens as well. A suite is not a run, and charging it to a per-run budget aborts it for
   being a suite. `make test-live` now prints estimated against actual tokens alongside
   dollars, so the figure the ceiling rests on stays observed.
+- The cloud lane's first capability-matrix row, from a live probe against a real key on
+  2026-08-10: native structured output is supported. The live suite enforces the row.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the

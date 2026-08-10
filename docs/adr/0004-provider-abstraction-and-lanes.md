@@ -154,10 +154,14 @@ some tokens on a fallback rather than a provider exception in a node that cannot
 
 | Gap | What would close it |
 | --- | --- |
-| `(CLOUD, NATIVE_STRUCTURED_OUTPUT)` | `test_whether_the_cloud_lane_supports_native_structured_output` in the live suite. It exists and reports the answer; nobody has run it. |
 | Tool calling, on any lane | Phase 4, when tools exist. |
 | Streaming, on any lane | Phase 7, when the SSE surface exists. |
 | Ollama and vLLM behaviour | Neither has been run against. The stub stands in for the shape, not for a specific server. |
+
+`(CLOUD, NATIVE_STRUCTURED_OUTPUT)` left this table on 2026-08-10. `scripts/probe_capabilities.py`
+was run against a real key and observed the native path returning a valid object with no
+post-processing, so the row is recorded as `supported: True, provenance: LIVE_PROBE` and the
+live suite now enforces it. The gap closed the way every gap here is meant to: by asking.
 
 **This inventory is incomplete, and it grows by measurement.** Every entry above exists because
 something was run and produced a surprising answer, which means the ones not yet found are the

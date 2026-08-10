@@ -110,11 +110,23 @@ class Observation:
 # which callers read as "not supported" -- see supports(). Adding a row is a claim, so it
 # needs a provenance and a date, and for a networked lane it needs to be more than a guess.
 #
-# The cloud lane is deliberately absent until a live probe has run. Nothing is known about
-# what a given key can do until it has been asked.
+# The cloud lane stayed absent until a live probe had run, because nothing is known about what
+# a given key can do until it has been asked. Its one row now is what the probe observed, and
+# the live suite fails if the provider stops agreeing with it.
 # ---------------------------------------------------------------------------------------
 
 CAPABILITY_MATRIX: Final[Mapping[tuple[Lane, Capability], Observation]] = {
+    (Lane.CLOUD, Capability.NATIVE_STRUCTURED_OUTPUT): Observation(
+        supported=True,
+        provenance=Provenance.LIVE_PROBE,
+        recorded_on=date(2026, 8, 10),
+        note=(
+            "Probed against gpt-4.1-nano on 2026-08-10 via scripts/probe_capabilities.py. "
+            "Native path returned a valid ProbeSchema without post-processing. Enforced by "
+            "tests/live/test_cloud_lane.py::"
+            "test_the_recorded_structured_output_capability_is_still_true"
+        ),
+    ),
     (Lane.FAKE, Capability.NATIVE_STRUCTURED_OUTPUT): Observation(
         supported=True,
         provenance=Provenance.IN_PROCESS,
