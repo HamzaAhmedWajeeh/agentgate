@@ -112,8 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   19,200, from a measured heaviest run of 1,920 tokens at the fan-out limit. Spend ceilings
   follow. The Phase 3 note predicted the old ceiling would reject every Phase 4 run; it would
   not have, and what it recorded instead is in `.env.example`.
-- Recorded, not fixed: the spend guard accounts chat-model usage and cannot see embedding
-  spend, which is free on the fake lane and real on the cloud lane. ADR 0004, item 9.
+- Embedding spend goes through the ledger, on the same three rules as a chat call: a response
+  with no usage is an error rather than a zero, an unpriced embedding model refuses to start,
+  and spend is recorded per model. Checked after every batch, so a runaway index trips the
+  ceiling while it runs rather than reporting the bill afterwards. **The run budget means all
+  spend, not chat spend** — ADR 0004 item 9 is closed with the decision and the reasoning, not
+  just the change.
+- Recorded: `langchain_openai.OpenAIEmbeddings` discards the `usage` block the API returns,
+  which is the one field the budget depends on, so the embedding call goes through the provider
+  client directly. ADR 0004, item 11.
 
 - The human gate: `interrupt()` called from inside the node, resumed with `Command(resume=...)`.
   Nothing above the pause has a side effect, because resume re-executes the node from its top —

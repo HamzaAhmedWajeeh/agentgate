@@ -146,7 +146,7 @@ a row that stops being true fails the build instead of quietly rotting.
 | **Consequence** | `Ceilings` is a required argument to `SpendLedger`, so a ledger has to say what it is accounting. The suite's ceiling has its own basis — the gatekeeper's estimate times the tolerance, the same bound as the dollar abort in the other unit — and `make test-live` now prints estimated against actual tokens as well as dollars, so the figure the ceiling rests on is observed rather than assumed. `AGENTGATE_LIVE_SPEND_ABORT_USD` tightens it, which is the first time that value has been enforced during a suite rather than reported after one. |
 | **Recorded** | `.env.example`, next to the run ceilings it is deliberately not part of. The failure mode worth naming: charged against the wrong ceiling, the suite aborts for being a suite, and the obvious remedy is to raise the run ceiling — weakening the guard that was working. |
 
-### 9. The spend guard cannot see embedding spend
+### 9. Embedding spend was invisible to every ceiling — CLOSED
 
 | | |
 | --- | --- |
@@ -154,7 +154,9 @@ a row that stops being true fails the build instead of quietly rotting.
 | **How established** | Found while re-deriving the ceilings at the end of Phase 4. `make measure` reports two model calls for a run that saturates the fan-out; the five research branches make none, because on the fake lane retrieval is embedding-only and embeddings are free. The zero is real on the fake lane and false on the cloud lane, which is the worst combination: the offline suite will never show it. |
 | **Evidence** | The measurement itself: `a request at the fan-out limit — 2 calls, 1,920 tokens`. Five branches, zero accounted calls. Nothing yet asserts the gap, which is why this row says "cannot see" rather than naming a test. |
 | **Consequence** | Stated in `.env.example` next to the token ceiling rather than left for someone to discover from a bill. Closing it means either accounting embedding usage into the ledger or declaring the corpus index a build-time cost outside the run budget — a real decision, not a patch, and it belongs with the guardrails work in Phase 5 rather than being improvised here. Until then no claim is made that the ceilings bound total spend; they bound *chat* spend. |
-| **Recorded** | Here, and in `.env.example`. Open. |
+| **Recorded** | Here and in `.env.example`. **Closed 2026-08-10.** |
+| **Decided** | **The run budget means all spend, not chat spend.** A gate that claims to cap spend and means "some spend" is misdescribed, and the specific reason it mattered here is that embedding cost scales with fan-out width — the one quantity a model chooses rather than the system. The unaccounted path was exactly the path with model-controlled multiplication in it. The alternative on the table was to declare the corpus index a build-time cost outside the run budget; rejected because querying is not indexing, every research branch embeds its sub-question at run time, and a budget with a carve-out is a budget someone has to remember. |
+| **Closed by** | `retrieval/accounting.py:AccountedEmbeddings` books every embedding call into the ledger on the same three rules as a chat call: a response with no usage is an error rather than a zero, an unpriced embedding model refuses to start (`config.py:_every_reachable_model_has_a_price` now includes it), and spend is recorded per model so the summary names `text-embedding-3-small` rather than "embeddings". `check()` runs after every batch, so a runaway index trips the ceiling while it is running rather than reporting the bill afterwards. Pinned by `tests/unit/test_embedding_accounting.py`. |
 
 ### 10. A checkpoint notice that no configuration can turn into an error, and a flag that makes it worse
 
@@ -166,7 +168,17 @@ a row that stops being true fails the build instead of quietly rotting.
 | **Consequence** | Two separate lessons. First, a `filterwarnings` entry was written, verified to enforce nothing, and **removed** — the absence is now a comment in `pyproject.toml` explaining why, because a rule that reads as enforcement and enforces nothing is worse than no rule. Second, and worth stating on its own: **`LANGGRAPH_STRICT_MSGPACK=true` is a control that makes things worse when enabled.** It converts a visible notice into a silent data loss — the value is dropped and the run carries on — so someone who turns it on believing it hardens the system has made a resume fail quietly instead of loudly. Do not set it. The real fix is ADR 0011: keep custom types out of channels, and enforce that with a walk over a real run's channels that depends on no framework behaviour at all. |
 | **Recorded** | Here and in ADR 0011. Version-specific: re-check on any LangGraph upgrade, including whether the flag has learned to raise. |
 
-### 11. Not measured yet, and therefore not claimed
+### 11. `OpenAIEmbeddings` discards the usage the budget depends on
+
+| | |
+| --- | --- |
+| **Difference** | The OpenAI embeddings API returns a `usage` block with the token count it charged for. `langchain_openai.OpenAIEmbeddings.embed_documents` returns the vectors and drops it. |
+| **How established** | Found while closing item 9. There is no accessor for it on the LangChain object; the field exists on the response the client underneath returns. |
+| **Evidence** | `retrieval/accounting.py:OpenAIEmbeddingsWithUsage` exists only because of this, and its docstring says so. The offline half is pinned by `tests/unit/test_embedding_accounting.py::test_an_embedder_that_reports_no_usage_is_an_error_not_a_free_call`; nothing has yet watched a real provider report it, which is recorded in the gaps table below. |
+| **Consequence** | The embedding call goes through the provider client directly and reads the reported count. The two alternatives were both worse: estimating tokens from the text is a guess presented as a measurement, and accounting zero is the bug being fixed. Note the shape — it is the same one as item 2, where the output cap was renamed on the wire: **a client is a convenience over a protocol, and what it chooses not to surface is invisible until something depends on it.** |
+| **Recorded** | Here. Version-specific: re-check on any `langchain-openai` upgrade, in case the usage is surfaced and the direct client call can go. |
+
+### 12. Not measured yet, and therefore not claimed
 
 These are absent from the capability matrix on purpose. An absent row means "nobody asked",
 which `supports()` reads as unsupported — the pessimistic direction, where being wrong costs
@@ -175,7 +187,7 @@ some tokens on a fallback rather than a provider exception in a node that cannot
 | Gap | What would close it |
 | --- | --- |
 | Tool calling, on any lane | Tools exist as of Phase 4 and the drafter binds them, but no live case has watched a real provider emit a tool call. A live case would change the suite's cost estimate and therefore its ceiling, so it lands with the next measured live run. |
-| Embeddings, on the cloud lane | `OpenAIEmbeddings` is wired and has never been called. The offline lane embeds in-process, so nothing in CI touches this path — see item 9 for the ceiling consequence. |
+| Embeddings, on the cloud lane | Wired, accounted, and never called against a real provider. The usage field the ledger reads (item 11) has only been exercised against a double. The offline lane embeds in-process, so nothing in CI touches this path — see item 9 for the ceiling consequence. |
 | Streaming, on any lane | Phase 7, when the SSE surface exists. |
 | Ollama and vLLM behaviour | Neither has been run against. The stub stands in for the shape, not for a specific server. |
 
