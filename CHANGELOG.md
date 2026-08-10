@@ -151,12 +151,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/concept-map.md` is now held to the repository by a test, in both directions, after it
   spent a phase claiming five concepts were simultaneously built and not built.
 
+- A durable audit trail: append-only JSON lines, self-describing field names, timezone-aware
+  timestamps, and the request recorded as a hash rather than content. Chosen for a reader who
+  does not have this repository — the same argument that decided the checkpoint boundary in ADR
+  0011, one level out.
+- Gate coverage enforced by discovery rather than by a list. The gates are enumerated from the
+  code and each must have written an event, so a gate added later without one fails the build.
+  Mutation-checked across eight ways a gate could go silent.
+- `openai` declared as a direct dependency. It was already installed as a transitive one, and
+  `retrieval/accounting.py` imports it directly because `OpenAIEmbeddings` drops the usage block
+  the budget depends on. An undeclared transitive import is a coupling nobody can see.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
   pytest subprocess that were not declared settings, and the unknown-variable guard rejected
   them, so every live case failed at configuration before reaching a provider. Both are
   declared settings now. Recorded as item 7 of the leak inventory in ADR 0004.
+- The lane nodes recorded themselves in the audit trail as `bind_cloud_capable` while the graph
+  knew them as `cloud_capable`, so a reader correlating the trail against the topology found no
+  such node. Found by the gate-discovery test on its first run.
 - The retrieval corpus was not copied into the container image. The runtime stage ships the
   virtualenv, which covers code and not data, so every research branch would have failed
   inside the container while every offline test passed — the suite runs from a checkout where

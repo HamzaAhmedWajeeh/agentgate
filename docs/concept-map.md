@@ -91,6 +91,9 @@ Things this build surfaced that were not on the original list, kept because each
 | Unmeasured usage is an error, never a free call | **done** | `guardrails/spend.py:usage_of` |
 | Embedding spend accounted in the same ledger | **done** | `retrieval/accounting.py:AccountedEmbeddings`; `tests/unit/test_embedding_accounting.py` |
 | Output check: citation provenance | **done** | `guardrails/output.py:check_provenance`; `tests/unit/test_output_guardrail.py` |
+| Durable append-only audit trail | **done** | `audit/writer.py:write_events`; `graph/nodes/finalise.py` |
+| Trail readable with no imports from agentgate | **done** | `tests/integration/test_audit_trail.py::test_the_trail_reads_with_the_standard_library_alone` |
+| Gate coverage enforced by discovery | **done** | `tests/integration/test_audit_trail.py::test_every_discovered_gate_wrote_an_event` |
 | Per-call-class output ceilings | **done** | `config.py:max_tokens_for`; asserted on the wire in `tests/integration/test_resilience.py` |
 | Wire-level assertions, never client attributes | **done** | `tests/integration/test_resilience.py:on_the_wire` |
 | Unknown `AGENTGATE_*` variable rejected with a suggestion | **done** | `config.py:_reject_unknown_variables` |

@@ -38,6 +38,12 @@ dependencies = [
     "langchain==1.3.14",
     "langchain-core==1.5.3",
     "langchain-openai==1.4.2",
+    # Already required by langchain-openai, declared because retrieval/accounting.py calls the
+    # provider client directly. OpenAIEmbeddings returns the vectors and drops the `usage` block
+    # the spend guard accounts from, so the embedding path reads the response itself rather than
+    # estimating tokens or recording zero. See ADR 0004, item 11. An undeclared transitive
+    # import is a coupling nobody can see.
+    "openai==2.53.0",
     # Checkpointers. Selected at runtime by config, never by editing code.
     "langgraph-checkpoint-sqlite==3.1.1",
     "langgraph-checkpoint-postgres==3.1.2",
