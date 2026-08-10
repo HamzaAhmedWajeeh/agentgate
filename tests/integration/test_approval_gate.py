@@ -32,7 +32,7 @@ from agentgate.config import CallClass, Settings
 from agentgate.graph.build import build_checkpointer, build_graph
 from agentgate.graph.nodes.approval import review_packet
 from agentgate.graph.nodes.execute import UnapprovedExecutionError, execute
-from agentgate.graph.state import Decision, initial_state
+from agentgate.graph.state import Decision, decision_of, initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
@@ -205,7 +205,7 @@ def test_approval_reaches_execute_and_rejection_never_does() -> None:
     rejected.start()
     still_going = rejected.resume(decision="rejected", feedback="no")
 
-    assert final["decision"] is Decision.APPROVED
+    assert decision_of(final) is Decision.APPROVED
     assert decided(final, "executed")
     assert not decided(still_going, "executed")
 
@@ -227,7 +227,7 @@ def test_execute_refuses_an_unapproved_state_whatever_the_topology_says() -> Non
     """The node's own check, independent of the edges. The topology is true until somebody
     draws another edge; this is true regardless."""
     state = initial_state("A request.", "corr")
-    state["decision"] = Decision.REJECTED
+    state["decision"] = Decision.REJECTED.value
 
     with pytest.raises(UnapprovedExecutionError, match="Refusing"):
         execute(state, settings_with())

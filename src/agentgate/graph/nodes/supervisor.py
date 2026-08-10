@@ -22,7 +22,7 @@ from langgraph.types import Command
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Settings
 from agentgate.graph.routing import budget_exhausted
-from agentgate.graph.state import AgentState, Decision
+from agentgate.graph.state import AgentState, Decision, decision_of
 
 NODE = "supervisor"
 
@@ -66,7 +66,7 @@ def supervise(state: AgentState, settings: Settings) -> Command[Destination]:
         # it found nothing, which is a better answer than silence and is the only path on
         # which the incompleteness gets written down where a reader will see it.
         goto = "drafter"
-    elif state.get("draft") and state.get("decision") is not Decision.APPROVED:
+    elif state.get("draft") and decision_of(state) is not Decision.APPROVED:
         # A draft exists and no human has approved it. Rejection clears the draft, so a
         # rejected run falls through to the drafter above on its next turn -- that fall-through
         # is the revision loop, and it is a loop precisely because neither branch is terminal.

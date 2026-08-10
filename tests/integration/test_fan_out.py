@@ -32,7 +32,7 @@ from agentgate.config import Settings
 from agentgate.graph.build import build_checkpointer, build_graph
 from agentgate.graph.completeness import research_gaps
 from agentgate.graph.nodes.researcher import BRANCH, dispatch
-from agentgate.graph.state import AgentState, initial_state
+from agentgate.graph.state import AgentState, findings_of, initial_state, outcomes_of
 from agentgate.models.fake import FakeChatModel, scripted_json
 from agentgate.retrieval.index import build_index
 
@@ -136,7 +136,7 @@ def test_a_failing_branch_does_not_take_the_survivors_with_it() -> None:
     final = run_graph(settings, QUESTIONS, retriever)
 
     assert len(retriever.attempted) == 3, "every branch should have been opened"
-    surviving = {finding.question for finding in final["findings"]}
+    surviving = {finding.question for finding in findings_of(final)}
     assert surviving == {QUESTIONS[0], QUESTIONS[2]}
     assert final["findings"], "the fan-in lost everything, not just the failed branch"
 
@@ -158,7 +158,7 @@ def test_the_failure_is_recorded_in_the_audit_trail_rather_than_swallowed() -> N
     assert failures[0]["detail"]["question"] == QUESTIONS[1]
     assert "corpus shard unavailable" in failures[0]["detail"]["error"]
 
-    outcomes = {outcome.question: outcome.ok for outcome in final["research_outcomes"]}
+    outcomes = {outcome.question: outcome.ok for outcome in outcomes_of(final)}
     assert outcomes == {QUESTIONS[0]: True, QUESTIONS[1]: False, QUESTIONS[2]: True}
 
 

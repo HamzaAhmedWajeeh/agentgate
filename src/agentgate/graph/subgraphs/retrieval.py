@@ -139,7 +139,7 @@ def build_retrieval_subgraph(
                 goto=PARENT_RETURN,
                 update={
                     "research_outcomes": [
-                        ResearchOutcome(question=question, ok=False, detail=error)
+                        ResearchOutcome(question=question, ok=False, detail=error).as_channel()
                     ],
                     "audit_trail": [
                         audit_event(
@@ -170,11 +170,11 @@ def build_retrieval_subgraph(
             graph=Command.PARENT,
             goto=PARENT_RETURN,
             update={
-                "findings": findings,
+                "findings": [finding.as_channel() for finding in findings],
                 "research_outcomes": [
                     ResearchOutcome(
                         question=question, ok=True, detail=f"{len(findings)} chunks retrieved"
-                    )
+                    ).as_channel()
                 ],
                 "audit_trail": [
                     audit_event(

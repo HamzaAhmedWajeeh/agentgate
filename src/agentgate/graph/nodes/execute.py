@@ -17,7 +17,7 @@ from __future__ import annotations
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Settings
 from agentgate.errors import AgentgateError
-from agentgate.graph.state import AgentState, Decision
+from agentgate.graph.state import AgentState, Decision, decision_of
 
 NODE = "execute"
 
@@ -38,7 +38,7 @@ def execute(state: AgentState, settings: Settings) -> AgentState:  # noqa: ARG00
     Raises:
         UnapprovedExecutionError: if the decision on state is anything but approved.
     """
-    decision = state.get("decision", Decision.PENDING)
+    decision = decision_of(state)
     if decision is not Decision.APPROVED:
         msg = (
             f"execute reached with decision={decision.value!r}. The only edge into this node "

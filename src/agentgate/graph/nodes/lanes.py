@@ -15,7 +15,7 @@ from typing import Protocol
 
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Lane, Settings, Tier
-from agentgate.graph.state import AgentState
+from agentgate.graph.state import AgentState, classification_of
 
 
 class LaneNode(Protocol):
@@ -39,7 +39,7 @@ def bind_lane(lane: Lane, tier: Tier) -> LaneNode:
     node_name = f"bind_{lane.value}_{tier.value}"
 
     def bind(state: AgentState, *, settings: Settings) -> AgentState:
-        classification = state.get("classification")
+        classification = classification_of(state)
         return {
             # Stored as a plain string: state is serialised into checkpoints, and an enum
             # that round-trips through JSON as a string but is compared as an enum is a

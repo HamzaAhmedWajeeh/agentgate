@@ -90,7 +90,7 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
     if decision is Decision.APPROVED:
         return Command(
             update={
-                "decision": Decision.APPROVED,
+                "decision": Decision.APPROVED.value,
                 "audit_trail": [
                     audit_event(
                         node=NODE,
@@ -110,7 +110,7 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
 
     return Command(
         update={
-            "decision": Decision.REJECTED,
+            "decision": Decision.REJECTED.value,
             "feedback": feedback,
             "revisions": revisions + 1,
             # Cleared so the supervisor routes back to the drafter. The draft is the thing

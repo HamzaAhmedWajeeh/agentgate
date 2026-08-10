@@ -153,11 +153,11 @@ def test_the_project_state_reduces_the_channels_that_fan_out() -> None:
     graph = StateGraph(AgentState)
     graph.add_node(
         "researcher_a",
-        lambda _state: {"findings": [Finding(question="a", content="alpha")]},
+        lambda _state: {"findings": [Finding(question="a", content="alpha").as_channel()]},
     )
     graph.add_node(
         "researcher_b",
-        lambda _state: {"findings": [Finding(question="b", content="beta")]},
+        lambda _state: {"findings": [Finding(question="b", content="beta").as_channel()]},
     )
     graph.add_edge(START, "researcher_a")
     graph.add_edge(START, "researcher_b")
@@ -166,7 +166,7 @@ def test_the_project_state_reduces_the_channels_that_fan_out() -> None:
 
     result = graph.compile().invoke({"findings": []})
 
-    assert {finding.question for finding in result["findings"]} == {"a", "b"}
+    assert {finding["question"] for finding in result["findings"]} == {"a", "b"}
 
 
 def test_the_project_state_refuses_concurrent_writes_to_a_single_writer_field() -> None:

@@ -78,7 +78,9 @@ def state_with_findings() -> AgentState:
     return {
         "request": "Draft a response about the refund timeline.",
         "correlation_id": str(uuid.uuid4()),
-        "findings": [Finding(question="refunds", content="Thirty days.", source="a.md#Window")],
+        "findings": [
+            Finding(question="refunds", content="Thirty days.", source="a.md#Window").as_channel()
+        ],
         "dispatched": 1,
         "research_outcomes": [],
     }

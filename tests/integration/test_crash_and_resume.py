@@ -226,7 +226,7 @@ def test_the_project_graph_resumes_on_the_same_thread(tmp_path: Path) -> None:
 
     assert final["finalised"] is True
     # Classification survived the restart rather than being recomputed from the top.
-    assert final["classification"].sensitivity.value == "internal"
+    assert final["classification"]["sensitivity"] == "internal"
     decided = [event["decided"] for event in final["audit_trail"]]
     assert decided.count("classified") == 1, "the run restarted from the top"
 

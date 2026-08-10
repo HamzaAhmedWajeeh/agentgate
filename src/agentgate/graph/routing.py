@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Literal
 
 from agentgate.config import Settings
-from agentgate.graph.state import AgentState, Complexity, Sensitivity
+from agentgate.graph.state import AgentState, Complexity, Sensitivity, classification_of
 
 PolicyRoute = Literal["cloud_capable", "cloud_cheap", "sovereign"]
 BudgetRoute = Literal["continue", "finalise"]
@@ -41,7 +41,7 @@ def route_by_policy(state: AgentState) -> PolicyRoute:
     boundary that exists so tier selection is explicit and auditable, not a claim that one
     tier is more expensive.
     """
-    classification = state.get("classification")
+    classification = classification_of(state)
     if classification is None:
         # Unclassified means unknown sensitivity, and unknown sensitivity is treated as the
         # most restrictive. Failing open here would make the classifier a single point of

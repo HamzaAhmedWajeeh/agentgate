@@ -27,7 +27,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import CallClass, Settings, Tier
 from agentgate.graph.completeness import research_gaps
-from agentgate.graph.state import AgentState
+from agentgate.graph.state import AgentState, findings_of
 from agentgate.models.registry import ModelFactory, build_model
 from agentgate.tools.allowlist import AllowlistMiddleware
 from agentgate.tools.registry import Agent, tools_for
@@ -45,7 +45,7 @@ Keep it short. Structure it the way the request asks for."""
 
 def _brief(state: AgentState) -> str:
     """What the drafter is shown: the request, and the findings, and nothing else."""
-    findings = state.get("findings", [])
+    findings = findings_of(state)
     lines = [f"Request:\n{state.get('request', '')}\n", "Findings:"]
     if not findings:
         lines.append("  (none — research produced nothing)")

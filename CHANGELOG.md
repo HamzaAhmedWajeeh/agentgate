@@ -125,6 +125,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `execute` is reachable only past the approved branch, and checks the decision on state as
   well. The topology is true until someone draws another edge; the node's own check is not.
 
+- State channels hold JSON-serialisable data only. A checkpoint is a persistence format, not
+  an in-process value: it outlives the process, the deploy, and under Postgres the container,
+  so anything crossing that boundary is a wire format with a schema. `Finding`,
+  `Classification` and `ResearchOutcome` stay as parse-and-serialise helpers at node
+  boundaries. Recorded in ADR 0011, including why registering the types was the wrong half of
+  the problem to solve and why the pytest configuration this was meant to use does not exist.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the

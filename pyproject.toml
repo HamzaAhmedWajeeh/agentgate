@@ -152,6 +152,13 @@ testpaths = ["tests"]
 # shared across test modules and are library code, not fixtures local to one file.
 pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config -m 'not live'"
+# No `filterwarnings` entry for the checkpoint deserialisation notice, and the absence is
+# deliberate: it is not a Python warning. LangGraph prints it, so `filterwarnings` cannot see
+# it and an entry here would have been a rule that enforced nothing while looking like it did.
+# `LANGGRAPH_STRICT_MSGPACK=true` does not raise either -- it blocks the value and continues,
+# which is a silent drop rather than a failure. The enforcement is therefore ours:
+# `tests/integration/test_checkpoint_serialisation.py` walks a real run's channels and fails on
+# anything that is not JSON data. See ADR 0011.
 asyncio_mode = "auto"
 markers = [
     "live: hits a real model provider, costs money, and is deselected by default",
