@@ -11,6 +11,10 @@ directions. The rule the map runs on is that **a row is a claim about what exist
 - a row marked *done* must name a file that exists and a symbol that is in it
 - a row marked *not built* must not name a symbol that resolves, so a row that quietly becomes
   true fails here until someone updates it
+- a row marked *built, not wired* must name a symbol that exists and that **nothing in `src/`
+  calls**, which is what makes the status mean something. It was added because `with_retry` and
+  `with_fallbacks` sat at *done* for four phases on the strength of a function no node has ever
+  called -- a green test suite over behaviour the system does not have. Leak inventory item 15.
 - no concept may appear twice with different statuses
 
 Every count is asserted non-empty. A parser that silently matches nothing turns all of this
@@ -40,6 +44,7 @@ PATHISH = re.compile(r"^[\w./-]+\.(py|md)(:[\w.]+)?$")
 
 MINIMUM_BUILT = 40
 MINIMUM_NOT_BUILT = 8
+MINIMUM_NOT_WIRED = 2
 
 
 class Row:
@@ -54,7 +59,11 @@ class Row:
 
     @property
     def not_built(self) -> bool:
-        return "not built" in self.status
+        return "not built" in self.status and not self.not_wired
+
+    @property
+    def not_wired(self) -> bool:
+        return "built, not wired" in self.status
 
     def references(self) -> list[tuple[Path, str | None]]:
         """Every ``path`` or ``path:symbol`` this row points at, resolved against the repo."""
@@ -95,7 +104,7 @@ def rows() -> list[Row]:
     return parsed
 
 
-def test_the_map_parses_into_rows_of_both_kinds(rows: list[Row]) -> None:
+def test_the_map_parses_into_rows_of_all_three_kinds(rows: list[Row]) -> None:
     """The guard for everything else here.
 
     Each check below filters the rows and asserts over what is left. If the parser or the
@@ -104,12 +113,17 @@ def test_the_map_parses_into_rows_of_both_kinds(rows: list[Row]) -> None:
     """
     built = [row for row in rows if row.built]
     not_built = [row for row in rows if row.not_built]
+    not_wired = [row for row in rows if row.not_wired]
 
     assert len(built) >= MINIMUM_BUILT, f"only {len(built)} built rows parsed; the parser drifted"
     assert len(not_built) >= MINIMUM_NOT_BUILT, f"only {len(not_built)} not-built rows parsed"
-    assert len(built) + len(not_built) == len(rows), (
-        "some rows are neither built nor not built: "
-        f"{[row for row in rows if not row.built and not row.not_built]}"
+    assert len(not_wired) >= MINIMUM_NOT_WIRED, (
+        f"only {len(not_wired)} built-not-wired rows parsed; the status wording drifted and the "
+        "check below is now reading an empty list"
+    )
+    assert len(built) + len(not_built) + len(not_wired) == len(rows), (
+        "some rows are in none of the three states: "
+        f"{[row for row in rows if not row.built and not row.not_built and not row.not_wired]}"
     )
 
 
@@ -151,6 +165,47 @@ def test_no_not_built_row_names_a_symbol_that_resolves(rows: list[Row]) -> None:
             assert not all(part in body for part in symbol.split(".")), (
                 f"{row}: {path.name} already contains {symbol!r}, so this row is out of date"
             )
+
+
+def test_every_built_not_wired_row_exists_and_is_called_from_nowhere(rows: list[Row]) -> None:
+    """The status is a claim in two directions, so both are checked.
+
+    The symbol has to exist -- *built* is half the claim. And no file in ``src/`` other than the
+    one defining it may mention it, which is the half that matters: the moment a node calls
+    ``build_resilient_model``, retry and fallback become behaviour this system has, and this test
+    fails until the row says so. Without that direction the status would rot in the pleasant
+    direction, which is how the row came to say *done* in the first place.
+
+    A mention inside the defining file is allowed. ``registry.py`` refers to the function in a
+    comment explaining where retries would be applied, and a rule that forbade that would force
+    the explanation out of the one file a reader looks in.
+    """
+    checked = 0
+    for row in (row for row in rows if row.not_wired):
+        for path, symbol in row.references():
+            assert path.exists(), f"{row}: {path} does not exist"
+            assert symbol, f"{row}: a built-not-wired row has to name the symbol it means"
+            body = path.read_text(encoding="utf-8")
+            assert all(part in body for part in symbol.split(".")), (
+                f"{row}: {path.name} does not contain {symbol!r}, so it is not built either"
+            )
+
+            callers = sorted(
+                other.relative_to(ROOT).as_posix()
+                for other in SOURCE.rglob("*.py")
+                if other.resolve() != path.resolve()
+                and symbol.split(".")[-1] in other.read_text(encoding="utf-8")
+            )
+            assert not callers, (
+                f"{row}: {symbol!r} is referenced from {callers}, so it is wired after all and "
+                "this row should say done"
+            )
+            checked += 1
+
+    assert checked >= MINIMUM_NOT_WIRED, (
+        f"only {checked} references resolved from the built-not-wired rows; the Location column "
+        "stopped naming symbols and this test is asserting nothing"
+    )
 
 
 def test_no_concept_appears_with_two_different_statuses(rows: list[Row]) -> None:

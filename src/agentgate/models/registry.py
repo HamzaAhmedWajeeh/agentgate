@@ -310,7 +310,11 @@ def _init_openai_compatible(
         temperature=settings.temperature,
         max_tokens=max_tokens,
         timeout=settings.request_timeout_seconds,
-        max_retries=0,  # retries are applied by build_resilient_model, in one place
+        # Zero, and nothing adds them back. `build_resilient_model` would, and no node calls
+        # it -- so this system performs no retries at all, on any lane. The comment here used to
+        # say retries were applied there "in one place", which was true about the design and
+        # false about the running system for four phases. Leak inventory item 15.
+        max_retries=0,
     )
 
 

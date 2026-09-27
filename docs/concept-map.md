@@ -11,6 +11,14 @@ claim about what exists rather than a promise about what will.** Rows marked *no
 nothing behind them today; some name the file they would live in, which is a plan and not a
 commitment.
 
+**Three statuses, and the third one exists because two rows were wrong.** *done* means it is in
+the system. *not built* means it is absent. **built, not wired** means the code exists and is
+tested and **nothing in `src/` calls it** -- so it is not behaviour this system has, however
+green its tests are. `with_retry` and `with_fallbacks` sat at *done* for four phases on the
+strength of `build_resilient_model`, which no node has ever called; leak inventory item 15. The
+status is enforced the same way the other two are: a *built, not wired* row whose symbol gains a
+caller anywhere in `src/` fails the build until someone moves the row.
+
 ---
 
 ## LangGraph
@@ -62,8 +70,8 @@ commitment.
 | Validate-and-repair structured output fallback | **done** | `models/structured.py:invoke_with_repair` |
 | ↳ its test, against a lane that really lacks native support | **done** | `tests/integration/test_sovereign_lane_structured_output.py::test_repair_loop_rescues_prose_wrapped_json_from_the_sovereign_lane` |
 | ↳ the leak it exists for, demonstrated | **done** | same file, `::test_native_structured_output_fails_against_the_sovereign_lane` |
-| `with_retry` | **done** | `models/registry.py:build_resilient_model` |
-| `with_fallbacks` | **done** | `models/registry.py:build_resilient_model` |
+| `with_retry` | **built, not wired** | `models/registry.py:build_resilient_model` |
+| `with_fallbacks` | **built, not wired** | `models/registry.py:build_resilient_model` |
 | ↳ tested against induced HTTP failures | **done** | `tests/integration/test_resilience.py` |
 | `@tool` with Pydantic arg schemas | **done** | `tools/registry.py` |
 | Tools bound to the model | **done** | `graph/nodes/drafter.py` via `tools_for(Agent.DRAFTER)` |
@@ -104,6 +112,10 @@ Things this build surfaced that were not on the original list, kept because each
 | Capability discovery split from capability enforcement | **done** | `scripts/probe_capabilities.py` produces; `tests/live/` enforces |
 | Ceilings derived from a measured run, not chosen | **done** | `scripts/measure_run.py`; basis recorded in `.env.example` |
 | Policy gate fails closed on an unparseable verdict | **done** | `graph/nodes/classify.py`; `tests/unit/test_nodes.py` |
+| Routed lane applied at model construction, asserted on the wire | **done** | `models/registry.py:build_model`; `tests/integration/test_routed_lane_enforcement.py` |
+| Route narrows the configured lane and cannot widen it | **done** | `config.py:narrower_of`; `config.py:CONTAINMENT` |
+| Classification runs on the most contained lane available | **done** | `config.py:classification_lane`; `graph/nodes/classify.py` |
+| Routed **tier** applied at model construction | not built | would need a `tier` channel in `graph/state.py`; `bind_lane` binds one and nothing carries it. Leak inventory item 16 |
 | Crash mid-run resumes from the last checkpoint | **done** | `tests/integration/test_crash_and_resume.py` |
 | `partial` erases node signatures from mypy | **done** (pinned) | `tests/integration/test_toolchain_blind_spots.py` |
 | `interrupt_before` in invoke config is silently ignored | **done** (pinned) | `tests/integration/test_toolchain_blind_spots.py` |
