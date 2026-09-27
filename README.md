@@ -42,7 +42,8 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
 - `make models` lists the model identifiers a key can reach. It cannot tell you what they cost,
   and says so: that API exposes no pricing, and no price is ever inferred from a name.
 
-- The graph: classification, a policy gate that routes restricted content to the sovereign lane,
+- The graph: classification, a policy gate that routes restricted content to the sovereign lane
+  **for its chat calls** -- see the retrieval caveat below, which is not a footnote,
   research fanned out over a compiled retrieval subgraph, a drafting worker, and a human
   approval gate that pauses before anything irreversible. Rejection returns the draft for
   revision, and a reviewer who never approves is stopped by the iteration budget rather than by
@@ -76,6 +77,14 @@ embedding path accounts against it, but the chat calls in the graph do not yet. 
 the run and session ceilings bound embedding spend and what `make measure` derives, not what a
 run's model calls actually consume.
 
+**Embedding spend is not accounted, and the row saying it was has been corrected.** Item 9 of
+that inventory recorded the gap as closed by `AccountedEmbeddings`. Nothing constructs it, so
+embedding spend is still invisible to every ceiling. Reopened as item 19.
+
+**Streamed calls report no token usage.** `langchain-openai` does not ask for it and the CLI is
+the only surface that streams, so every model call made through the command line is unmeasured.
+Latent while chat spend is unwired; item 18.
+
 **There are no retries and no fallbacks on any lane.** `build_resilient_model` composes both and
 is tested against a server returning real HTTP errors, and nothing in `src/` calls it. That is
 ADR 0004 item 15, and `docs/concept-map.md` marks both rows *built, not wired* — a status the
@@ -86,6 +95,16 @@ request to the sovereign lane and no sovereign endpoint is configured, the run s
 alternative is serving it from the lane policy just ruled out, which is what used to happen and
 is ADR 0004 item 13.
 
+**The policy gate is enforced for chat calls, and not for retrieval.** What is pinned on the
+wire, against two stub endpoints with separate request logs: the drafter's synthesis call and the
+classifier's call both go to the lane the router chose. What is **not**: research queries. The
+embedder dispatches on the configured lane and never sees the route, so on a hybrid deployment a
+restricted request has its sub-questions -- and the whole corpus -- embedded by the third party.
+That is ADR 0004 item 17, it is **open**, and it is recorded by a test that asserts the egress
+happens rather than by a note somebody has to remember. **So this system does not claim that
+restricted content never reaches a cloud provider.** It claims that the chat calls go where policy
+sent them, and names the path that does not.
+
 **Classification runs on the most contained lane available, which on a cloud-only deployment is
 the cloud.** The raw request is shown to the third party in order to decide whether it was
 allowed to go there. A hybrid deployment classifies on its own endpoint instead; a deployment
@@ -95,8 +114,10 @@ lane is not claimed: a classifier that cannot produce a verdict fails closed to 
 the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
 
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — sixteen entries, each
-established by running something rather than by reading it, each pinned by a test. It says
+an inventory of every place something claimed one thing and did another — nineteen entries, each
+established by running something rather than by reading it, each pinned by a test. Two of them are
+corrections to earlier rows in the same document: item 19 reopens item 9, which said *closed* and
+was not. It says
 plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
 exercised. It is the most honest document here.
 

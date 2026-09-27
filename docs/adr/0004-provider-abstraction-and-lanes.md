@@ -154,7 +154,7 @@ request logs rather than any value the graph produced.
 | **Consequence** | `Ceilings` is a required argument to `SpendLedger`, so a ledger has to say what it is accounting. The suite's ceiling has its own basis — the gatekeeper's estimate times the tolerance, the same bound as the dollar abort in the other unit — and `make test-live` now prints estimated against actual tokens as well as dollars, so the figure the ceiling rests on is observed rather than assumed. `AGENTGATE_LIVE_SPEND_ABORT_USD` tightens it, which is the first time that value has been enforced during a suite rather than reported after one. |
 | **Recorded** | `.env.example`, next to the run ceilings it is deliberately not part of. The failure mode worth naming: charged against the wrong ceiling, the suite aborts for being a suite, and the obvious remedy is to raise the run ceiling — weakening the guard that was working. |
 
-### 9. Embedding spend was invisible to every ceiling — CLOSED
+### 9. Embedding spend was invisible to every ceiling — REOPENED, see item 19
 
 | | |
 | --- | --- |
@@ -164,7 +164,8 @@ request logs rather than any value the graph produced.
 | **Consequence** | Stated in `.env.example` next to the token ceiling rather than left for someone to discover from a bill. Closing it means either accounting embedding usage into the ledger or declaring the corpus index a build-time cost outside the run budget — a real decision, not a patch, and it belongs with the guardrails work in Phase 5 rather than being improvised here. Until then no claim is made that the ceilings bound total spend; they bound *chat* spend. |
 | **Recorded** | Here and in `.env.example`. **Closed 2026-08-10.** |
 | **Decided** | **The run budget means all spend, not chat spend.** A gate that claims to cap spend and means "some spend" is misdescribed, and the specific reason it mattered here is that embedding cost scales with fan-out width — the one quantity a model chooses rather than the system. The unaccounted path was exactly the path with model-controlled multiplication in it. The alternative on the table was to declare the corpus index a build-time cost outside the run budget; rejected because querying is not indexing, every research branch embeds its sub-question at run time, and a budget with a carve-out is a budget someone has to remember. |
-| **Closed by** | `retrieval/accounting.py:AccountedEmbeddings` books every embedding call into the ledger on the same three rules as a chat call: a response with no usage is an error rather than a zero, an unpriced embedding model refuses to start (`config.py:_every_reachable_model_has_a_price` now includes it), and spend is recorded per model so the summary names `text-embedding-3-small` rather than "embeddings". `check()` runs after every batch, so a runaway index trips the ceiling while it is running rather than reporting the bill afterwards. Pinned by `tests/unit/test_embedding_accounting.py`. |
+| **Reopened 2026-09-27** | **This row was wrong.** `AccountedEmbeddings` books nothing, because nothing constructs it -- `build_embeddings` returns a plain `OpenAIEmbeddings`, and embedding spend is still invisible to every ceiling. The decision below stands; the implementation is not on any path. See item 19, which is where the correction is recorded rather than hidden by an edit. The one part that was true: the price guard does include the embedding model, so an unpriced embedder still refuses to start. |
+| **Claimed by** | `retrieval/accounting.py:AccountedEmbeddings` books every embedding call into the ledger on the same three rules as a chat call: a response with no usage is an error rather than a zero, an unpriced embedding model refuses to start (`config.py:_every_reachable_model_has_a_price` now includes it), and spend is recorded per model so the summary names `text-embedding-3-small` rather than "embeddings". `check()` runs after every batch, so a runaway index trips the ceiling while it is running rather than reporting the bill afterwards. Pinned by `tests/unit/test_embedding_accounting.py`. |
 
 ### 10. A checkpoint notice that no configuration can turn into an error, and a flag that makes it worse
 
@@ -256,14 +257,77 @@ live suite now enforces it. The gap closed the way every gap here is meant to: b
 | **Recorded** | Here and in the concept map. |
 | **Closed by** | Nothing yet. |
 
-Two of the four rows above are closed, and two are recorded and open. Items 15 and 16 are
-here because the measurement that found item 13 found them on the way past: once you are asking
-"does the thing the trail claims actually happen", the same question has obvious next targets.
+### 17. Retrieval embeds on the configured lane, ignoring the route
+
+| | |
+| --- | --- |
+| **Difference** | `build_embeddings` dispatches on `settings.lane` and never sees the routed lane. So on a hybrid deployment, a request the policy gate sent to the sovereign lane has its research queries -- and the whole corpus -- embedded by the third party anyway. Item 13 fixed the chat calls in `classify` and `draft`; this is the identical defect in the function next door, and item 13's guards could not see it because they seed findings and never research. |
+| **How established** | A real research branch, on a hybrid cloud-default deployment, with the account number in the sub-question -- which is where it lives in reality, because a question about a refund window is not answerable without naming the account. The account number and the name both arrive at the cloud embedding endpoint. Two facts had to be fixed before it could be established at all, and both are the finding: `OpenAIEmbeddings` was constructed **with no endpoint to override**, so every request went to `api.openai.com` and no double could ever see one; and it **tokenises client-side**, so the body carries `[[2, 68538, ...]]` and a canary assertion that greps it matches nothing. The first version of the test did exactly that and passed against a leak in progress. |
+| **Evidence** | `tests/integration/test_routed_lane_enforcement.py::test_a_restricted_research_query_is_embedded_by_the_cloud_provider`, which asserts the leak *happens* -- the same treatment as item 14's documented egress, so closing it is a visible inversion of a named test. `::test_the_sovereign_lane_is_not_where_the_research_query_went` is the absence that gives it meaning: the operator's own endpoint receives no embedding request at all, because no code path constructs one. `::test_the_corpus_itself_is_indexed_through_the_same_egress` records that indexing shares the egress, which is what makes the fix a design question. `::test_the_embedding_decoder_recovers_text_the_corpus_actually_contains` is the control on the instrument: it checks the decode against a line known to be in the corpus on disk, because a decoder using the wrong encoding returns plausible rubbish and every canary assertion above it goes quiet. |
+| **Consequence, so far** | Only observability. `openai_api_base` is passed now, and `decode_embedding_input` exists, so the path can be watched -- **a leak nothing can observe is a leak nothing can pin.** Note which field name: `base_url` is the pydantic alias and mypy rejects it, exactly as item 2 predicted one layer up. The canary helper in that test file now reads the decoded embedding texts alongside the chat log, because an absence assertion that reads only the chat log is blind to this entire egress. |
+| **Not closed, and it is a design question rather than a patch** | The corpus is embedded in one vector space. A query embedded by a different model cannot search an index built by this one, so "embed restricted queries somewhere contained" is not a one-line change -- it implies a decision about the index. The options and what each costs are laid out below rather than resolved here. |
+| **Recorded** | Here, in `retrieval/embeddings.py`, in `retrieval/accounting.py`, and in the README's limitations. |
+| **Closed by** | Nothing. Observable, pinned, open. |
+
+**One thing this row cannot yet guard.** The canary helper was widened to read decoded embedding texts, which makes every absence assertion in that file cover retrieval egress. Nothing enforces that widening, because no configuration currently embeds anywhere *but* the cloud -- so there is no absence to assert. It becomes load bearing the moment item 17 is closed, and a mutation reverting it would pass today.
+
+### 18. A streamed call reports no usage, and the CLI is the only thing that streams
+
+| | |
+| --- | --- |
+| **Difference** | A streamed OpenAI response carries no `usage` block unless the caller sets `stream_options.include_usage`. `langchain-openai` does not set it. The CLI runs the graph with `stream_mode=["updates", "messages"]`, which makes every model call it issues a streamed one -- so **every model call made through the command line reports no token usage at all.** Not an error; an absent number. |
+| **How established** | Observed in the stub's request log: every streamed body carries `"stream": True` and no `stream_options` key. Found while writing the first CLI test to run against a networked lane, which is a combination nothing had ever exercised -- every other command test runs on the fake lane, where no provider exists to have defaults. |
+| **Evidence** | `tests/integration/test_cli.py::test_streamed_calls_ask_for_no_usage_block_which_is_recorded_not_accepted`, asserting the current truth. Its control is `::test_the_endpoint_does_return_usage_when_a_stream_asks_for_it`, which asks the endpoint directly over HTTP with the flag set and requires the usage chunk to arrive -- because "no usage came back" has two possible causes and only one of them is a fact about this system. |
+| **Consequence** | Latent, and it is worth being precise about why. Chat calls are not wired to the spend ledger (README, and item 19 below), so nothing currently reads the number. It stops being latent the moment they are: `usage_of` refuses to treat an unmeasured call as free, and on this path there would be nothing to refuse, because the field is simply absent. Same shape as item 11 -- **a client is a convenience over a protocol, and what it declines to send is invisible until something depends on it.** Third instance now. |
+| **Also** | The first version of that test asserted the property of both stubs, and `all()` over an empty list is `True`: on a restricted request the cloud endpoint receives no streamed calls at all, so half the assertion was passing by looking at nothing. Caught by the other half failing. |
+| **Recorded** | Here and in `tests/doubles/openai_compatible.py`. |
+| **Closed by** | Nothing. The fix belongs with wiring chat spend into the ledger, not here. |
+
+### 19. `AccountedEmbeddings` is not wired, so item 9 is not closed
+
+| | |
+| --- | --- |
+| **Difference** | Item 9 above says **Closed 2026-08-10**, and names `retrieval/accounting.py:AccountedEmbeddings` as what closed it. Nothing constructs it. `build_embeddings` returns a plain `langchain_openai.OpenAIEmbeddings`, which -- as `accounting.py`'s own module docstring says in the course of explaining why `OpenAIEmbeddingsWithUsage` exists -- discards the `usage` block the budget depends on. So on the cloud lane, embedding spend is invisible to the run ceiling, the session ceiling and the live-suite ceiling: **exactly the state item 9 describes as fixed.** |
+| **How established** | `grep -rn "AccountedEmbeddings\|OpenAIEmbeddingsWithUsage" src/ tests/ scripts/` returns the class definitions and `tests/unit/test_embedding_accounting.py`, and nothing else. Found while tracing the embedding path for item 17. |
+| **Evidence** | `tests/integration/test_routed_lane_enforcement.py::test_no_embedding_call_is_accounted_for_anywhere` asserts that the embedder the index builds is `OpenAIEmbeddings`, so wiring the accounted one turns it red. `docs/concept-map.md` carries the row as **built, not wired**, which is enforced in both directions. |
+| **Consequence** | The half of item 9 that *is* true is the price guard: `_every_reachable_model_has_a_price` does include the embedding model, so an unpriced embedder still refuses to start. Everything about accounting is not. Item 9's **Closed by** row is corrected rather than deleted, because the correction is the interesting part -- and the general rule it produces is the same one as item 15: **a class with thorough unit tests and no caller is evidence about the class.** Second instance in this inventory, found six weeks apart, both by asking "what actually calls this". |
+| **Recorded** | Here, in the corrected item 9, and in the concept map. |
+| **Closed by** | Nothing. Wiring it changes when ceilings trip during an index build, and it interacts with the item 17 options below, so it is a decision rather than a patch. |
+
+Two of the seven rows above are closed and five are recorded and open, which is the honest ratio
+for a session spent asking one question. Items 15 to 19 all came out of item 13's measurement:
+once you are asking "does the thing the trail claims actually happen", the same question has
+obvious next targets, and it keeps finding the same answer. Three of them -- 15, 19 and the tier
+in 16 -- are the identical shape: **code that is correct, tested, and called from nowhere.**
 
 **This inventory is incomplete, and it grows by measurement.** Every entry above exists because
 something was run and produced a surprising answer, which means the ones not yet found are the
 ones nothing has exercised. The correct response to a suspected difference is to write a test
 that provokes it, not to add a defensive branch.
+
+## Closing item 17: the index is the hard part
+
+Recorded here rather than decided, because the choice is a deployment trade-off and the
+measurements that would settle it have not been taken.
+
+The constraint that makes this awkward: **a vector index belongs to the model that built it.** A
+query embedded by one model cannot meaningfully search an index built by another, so "embed
+restricted queries on the contained lane" implies an answer to "what indexed the corpus".
+
+| Option | What it costs |
+| --- | --- |
+| **Per-lane indexes.** One index per lane, each built by that lane's embedder; a routed request searches the index matching its effective lane. | Honest and complete, and the most expensive. Index build time and storage multiply by the number of lanes, and the offline suite gains a second index build per retrieval test. Startup or first-query latency rises for whichever index is built lazily. The sovereign lane needs a real embedding endpoint (see below) or its index is built by `HashingEmbeddings`, which would mean restricted requests search a bag-of-words index while public ones search a semantic one -- **a quality difference that correlates exactly with sensitivity**, which is worse than it sounds and needs saying out loud. |
+| **Index both ways, always.** Build every index with every configured embedder up front; route the query to the matching one. | Same storage and build cost as per-lane indexes with none of the laziness, so it is strictly worse on cost and strictly better on first-query latency. Simpler to reason about: no lane can arrive and find no index. Offline suite unaffected if the fake lane counts as one embedder. |
+| **A sovereign embedding endpoint.** `AGENTGATE_SOVEREIGN_EMBEDDING_MODEL` plus the existing base URL; restricted queries embed there. | Smallest conceptual change and it composes with either option above -- but it does not stand alone, because it still leaves the corpus indexed by whichever lane built it. Adds a setting, a capability-matrix row, and a price entry, and it is another networked path with no live verification: Ollama and vLLM serve embeddings, and neither has ever been run against. |
+| **Index on the contained lane only.** Build one index with the most contained embedder available and let every lane search it. | Cheapest, one index, no routing logic in retrieval at all, and it makes the guarantee unconditional -- no corpus content reaches a third party either. The cost is retrieval quality for every request including public ones, and on a fake-lane deployment it means the hashing embedder indexes production, which is not a thing to ship quietly. |
+| **Do not retrieve for restricted requests.** Route restricted requests down a path with no research. | No embedding egress at all and nothing to index twice. It changes what the product does rather than how it does it: restricted requests get the weakest answers, which inverts the usual expectation and should be a stated product decision rather than a consequence of an infrastructure constraint. |
+| **Keep it open and scope the claim.** What is in force today: the leak is pinned by a passing test, the README says retrieval is not covered, and no claim is made that restricted content never reaches the cloud. | Costs nothing and fixes nothing. Defensible only for as long as the claim stays scoped, which is why the scoping is enforced by the tests above rather than by remembering. |
+
+What would inform the choice, and none of it has been measured: index build time against the
+committed corpus per embedder, whether a sovereign embedding endpoint returns usage at all (item
+11 and item 18 both suggest treating that as unknown until observed), and whether retrieval
+quality on a hashing index is acceptable for restricted requests -- which is a judgement about the
+product, not a number.
 
 ## Consequences
 

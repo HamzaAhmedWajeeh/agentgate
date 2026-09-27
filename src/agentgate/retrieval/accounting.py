@@ -108,11 +108,16 @@ class OpenAIEmbeddingsWithUsage:
     count is read off the response rather than estimated from the text.
     """
 
-    def __init__(self, model: str, api_key: str, timeout: float) -> None:
+    def __init__(
+        self, model: str, api_key: str, timeout: float, base_url: str | None = None
+    ) -> None:
         from openai import OpenAI  # noqa: PLC0415 - lane-specific import
 
         self.model = model
-        self.client = OpenAI(api_key=api_key, timeout=timeout)
+        # Takes the endpoint for the same reason `build_embeddings` now does: without it this
+        # class cannot be pointed at a double, so the accounting it performs could only ever be
+        # tested against a fake of itself. See leak inventory item 17.
+        self.client = OpenAI(api_key=api_key, timeout=timeout, base_url=base_url)
 
     def embed_with_usage(self, texts: list[str]) -> tuple[list[list[float]], int]:
         response: Any = self.client.embeddings.create(model=self.model, input=texts)

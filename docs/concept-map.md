@@ -98,8 +98,10 @@ Things this build surfaced that were not on the original list, kept because each
 | Deterministic fake lane with honest usage metadata | **done** | `models/fake.py` |
 | Committed OpenAI-compatible stub server | **done** | `tests/doubles/openai_compatible.py` |
 | Spend ledger with run and session ceilings | **done** (not yet wired into the graph) | `guardrails/spend.py`; used by the live suite only |
+| Streamed calls report their token usage | not built | `langchain-openai` sets no `stream_options`, and the CLI is the only surface that streams. Leak inventory item 18 |
 | Unmeasured usage is an error, never a free call | **done** | `guardrails/spend.py:usage_of` |
-| Embedding spend accounted in the same ledger | **done** | `retrieval/accounting.py:AccountedEmbeddings`; `tests/unit/test_embedding_accounting.py` |
+| Embedding spend accounted in the same ledger | **built, not wired** | `retrieval/accounting.py:AccountedEmbeddings` |
+| ↳ why that row changed | **done** (pinned) | `tests/integration/test_routed_lane_enforcement.py`; the index builds a plain `OpenAIEmbeddings`, so ADR 0004 item 9 is reopened as item 19 |
 | Output check: citation provenance | **done** | `guardrails/output.py:check_provenance`; `tests/unit/test_output_guardrail.py` |
 | Durable append-only audit trail | **done** | `audit/writer.py:write_events`; `graph/nodes/finalise.py` |
 | Trail readable with no imports from agentgate | **done** | `tests/integration/test_audit_trail.py::test_the_trail_reads_with_the_standard_library_alone` |
@@ -117,6 +119,10 @@ Things this build surfaced that were not on the original list, kept because each
 | Routed lane applied at model construction, asserted on the wire | **done** | `models/registry.py:build_model`; `tests/integration/test_routed_lane_enforcement.py` |
 | Route narrows the configured lane and cannot widen it | **done** | `config.py:narrower_of`; `config.py:CONTAINMENT` |
 | Classification runs on the most contained lane available | **done** | `config.py:classification_lane`; `graph/nodes/classify.py` |
+| Retrieval embeds on the lane the router chose | not built | `retrieval/embeddings.py` dispatches on the configured lane. Observable and pinned as of item 17; closing it is a decision about the index |
+| Embedding requests can be observed on the wire | **done** | `retrieval/embeddings.py`; `tests/doubles/openai_compatible.py:decode_embedding_input` |
+| The stub server speaks SSE, so a networked lane can be driven from the CLI | **done** | `tests/doubles/openai_compatible.py`; `tests/integration/test_cli.py` |
+| An agentgate error from the CLI is reported, not traced | **done** | `cli.py:main`; `tests/integration/test_cli.py` |
 | Routed **tier** applied at model construction | not built | would need a `tier` channel in `graph/state.py`; `bind_lane` binds one and nothing carries it. Leak inventory item 16 |
 | Crash mid-run resumes from the last checkpoint | **done** | `tests/integration/test_crash_and_resume.py` |
 | `partial` erases node signatures from mypy | **done** (pinned) | `tests/integration/test_toolchain_blind_spots.py` |

@@ -44,6 +44,12 @@ dependencies = [
     # estimating tokens or recording zero. See ADR 0004, item 11. An undeclared transitive
     # import is a coupling nobody can see.
     "openai==2.53.0",
+    # Already required by langchain-openai, declared for the same reason `openai` is: the test
+    # suite calls it directly. `OpenAIEmbeddings` tokenises client-side, so an embedding request
+    # carries token ids rather than text -- and without decoding them, every canary assertion
+    # about the embedding path matches nothing and passes forever while content leaves. See
+    # tests/doubles/openai_compatible.py:decode_embedding_input and ADR 0004 item 17.
+    "tiktoken==0.13.0",
     # Checkpointers. Selected at runtime by config, never by editing code.
     "langgraph-checkpoint-sqlite==3.1.1",
     "langgraph-checkpoint-postgres==3.1.2",
