@@ -323,11 +323,61 @@ restricted queries on the contained lane" implies an answer to "what indexed the
 | **Do not retrieve for restricted requests.** Route restricted requests down a path with no research. | No embedding egress at all and nothing to index twice. It changes what the product does rather than how it does it: restricted requests get the weakest answers, which inverts the usual expectation and should be a stated product decision rather than a consequence of an infrastructure constraint. |
 | **Keep it open and scope the claim.** What is in force today: the leak is pinned by a passing test, the README says retrieval is not covered, and no claim is made that restricted content never reaches the cloud. | Costs nothing and fixes nothing. Defensible only for as long as the claim stays scoped, which is why the scoping is enforced by the tests above rather than by remembering. |
 
-What would inform the choice, and none of it has been measured: index build time against the
-committed corpus per embedder, whether a sovereign embedding endpoint returns usage at all (item
-11 and item 18 both suggest treating that as unknown until observed), and whether retrieval
-quality on a hashing index is acceptable for restricted requests -- which is a judgement about the
-product, not a number.
+### Item 19 comes first, for any option that keeps embedding on the cloud lane
+
+**Per-lane indexes, indexing both ways, and keeping it open all leave embedding spend on the cloud
+lane, and that spend is currently accounted by nothing.** `AccountedEmbeddings` is not wired -- item
+19 -- so every one of those options ships an egress whose cost no ceiling can see. Wiring it is a
+prerequisite rather than a follow-up.
+
+And wiring it **changes when ceilings trip**. `AccountedEmbeddings.check()` runs after every batch,
+which is deliberate: a runaway index trips the ceiling while it is running rather than reporting the
+bill afterwards. The consequence for these options is that an index build becomes a thing that can
+*fail partway through* on a spend limit, where today it cannot fail at all. Per-lane indexes make
+that worse in proportion to the number of lanes, and a first-query lazy build makes it worse again
+by moving the failure into a request rather than into startup.
+
+Indexing on the contained lane is the only option that sidesteps this, because there is no cloud
+embedding spend left to account.
+
+### What has now been measured
+
+`scripts/measure_retrieval.py`, run 2026-09-27 against the committed 20-chunk corpus, with the
+questions and expected chunks committed in `scripts/retrieval_questions.json`:
+
+| | `HashingEmbeddings` | `OpenAIEmbeddings` -> stub |
+| --- | --- | --- |
+| index build, median of 3 | **0.013 s** | **0.020 s** |
+| embedding calls for 20 chunks | 0 | **1** (one batch) |
+| top-4 hit rate, 10 questions | **90%** (9/10) | 10% -- see below |
+| shared-vocabulary questions | 5/5 | 0/5 |
+| synonym-only questions | 4/5 | 1/5 |
+
+**Build cost does not distinguish the options.** One batched call and seven milliseconds against a
+loopback stub. A real endpoint adds a round trip, so treat 0.020 s as a floor -- but the shape is
+clear: at this corpus size, indexing twice costs nothing worth deciding on.
+
+**The hit rate does.** 90% against a **20% chance floor** (top-4 of 20), and 4 of the 5
+synonym-only questions were found -- including "can a customer still get their money back after six
+weeks", which shares one content word with its answer. The stub column is a deliberately
+meaningless embedder and scored 10%, which is what makes the 90% readable: if a hash of the input
+had scored well, the questions would be answerable by anything.
+
+**The one miss is the honest limit.** *"What is the deadline for the write-up after something goes
+wrong?"* has zero content words in common with the section it should find, and term frequency over
+a fixed vocabulary has nothing to work with. It retrieved the refund eligibility window instead.
+That is what a bag of words cannot do, stated by measurement rather than by argument.
+
+**What this does not license.** The number belongs to *this corpus at this size*. Top-4 of 20 is a
+generous test, and ADR 0010 already records the collision curve that makes a hashing index degrade
+as vocabulary grows -- 7% of terms sharing a bucket at 4096 dimensions against 301 distinct terms
+today. A corpus an order of magnitude larger would need re-measuring before the same conclusion
+could be drawn, and this table is only as good as its date.
+
+**Still not measured**, and neither can be from here: retrieval quality of a real cloud embedder,
+which needs a key and a live probe -- the script refuses to print a figure it cannot observe -- and
+whether a sovereign embedding endpoint reports usage at all, which items 11 and 18 both suggest
+treating as unknown until seen on a wire.
 
 ## Consequences
 
