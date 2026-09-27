@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 from difflib import get_close_matches
 from enum import StrEnum
-from functools import lru_cache
+from functools import lru_cache, reduce
 from pathlib import Path
 from typing import Annotated, Any, Final
 
@@ -63,6 +63,37 @@ class Lane(StrEnum):
     CLOUD = "cloud"
     SOVEREIGN = "sovereign"
     FAKE = "fake"
+
+
+CONTAINMENT: Final[dict[Lane, int]] = {
+    Lane.FAKE: 0,
+    Lane.SOVEREIGN: 1,
+    Lane.CLOUD: 2,
+}
+"""How far data travels on each lane. Lower is more contained.
+
+``FAKE`` never leaves the process. ``SOVEREIGN`` leaves it for infrastructure the operator
+controls. ``CLOUD`` leaves the organisation. This is an ordering, not a ranking of quality, and
+it exists so that combining two constraints has one obvious answer.
+"""
+
+
+def narrower_of(first: Lane, second: Lane) -> Lane:
+    """The more contained of two lanes.
+
+    The policy router and the deployment are both constraints on where a request may go, and a
+    constraint can only ever *narrow*. Taking the minimum is what makes that true in code:
+
+    - A cloud-default deployment routing restricted content to ``sovereign`` honours the route.
+      That is leak-inventory item 13, and the reason this function exists.
+    - A sovereign-default deployment routing public content to ``cloud`` stays on ``sovereign``.
+      Honouring that route would start calling a third party on behalf of an operator who
+      configured their own endpoint as the default -- a worse bug than the one being fixed, and
+      the one the obvious repair introduces.
+    - A ``fake`` deployment stays fake whatever the router says, which is what lets the whole
+      offline suite exercise real routing without an endpoint in sight.
+    """
+    return first if CONTAINMENT[first] <= CONTAINMENT[second] else second
 
 
 class Tier(StrEnum):
@@ -440,20 +471,38 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _sovereign_lane_is_fully_specified(self) -> Settings:
-        if self.lane is not Lane.SOVEREIGN:
+        """Complete if it is the default, and equally if the router can merely reach it.
+
+        The second half is new with leak-inventory item 13. Before the routed lane was wired
+        through, a base URL with no model was harmless: nothing ever built a sovereign model on a
+        cloud-default deployment, so the missing identifier was never asked for. Now the policy
+        gate can send restricted content there, which turns that configuration into a run that
+        classifies correctly, routes correctly, and then dies inside the lane node -- at the
+        first restricted request rather than at startup.
+        """
+        if self.lane is Lane.SOVEREIGN:
+            missing = [
+                name
+                for name, value in (
+                    (f"{ENV_PREFIX}SOVEREIGN_BASE_URL", self.sovereign_base_url),
+                    (f"{ENV_PREFIX}SOVEREIGN_MODEL", self.sovereign_model),
+                )
+                if not value
+            ]
+            if missing:
+                msg = (
+                    f"lane is 'sovereign' but {', '.join(missing)} "
+                    f"{'is' if len(missing) == 1 else 'are'} not set"
+                )
+                raise ValueError(msg)
             return self
-        missing = [
-            name
-            for name, value in (
-                (f"{ENV_PREFIX}SOVEREIGN_BASE_URL", self.sovereign_base_url),
-                (f"{ENV_PREFIX}SOVEREIGN_MODEL", self.sovereign_model),
-            )
-            if not value
-        ]
-        if missing:
+
+        if self.sovereign_base_url and not self.sovereign_model:
             msg = (
-                f"lane is 'sovereign' but {', '.join(missing)} "
-                f"{'is' if len(missing) == 1 else 'are'} not set"
+                f"{ENV_PREFIX}SOVEREIGN_BASE_URL is set, so the policy gate can route "
+                f"restricted content to the sovereign lane, but {ENV_PREFIX}SOVEREIGN_MODEL is "
+                "not set. A lane the router can choose needs a model identifier, or the first "
+                "restricted request fails inside the graph instead of here"
             )
             raise ValueError(msg)
         return self
@@ -484,10 +533,17 @@ class Settings(BaseSettings):
         item 9: indexing and querying the corpus cost real money that no ceiling could see. An
         embedding model with no price is the same refusal as a chat model with no price, for
         the same reason.
+
+        **So is every lane the router can choose**, which it was not until item 13. "Reachable"
+        was read off the configured lane, so a hybrid deployment's sovereign model -- the one the
+        policy gate exists to send restricted content to -- was outside the guard entirely. The
+        guard was not wrong about what it checked; it was asking about the wrong set.
         """
         if not self.requires_network:
             return self
-        reachable = {self.model_for(tier) for tier in Tier}
+        reachable = {
+            self.model_for(tier, lane=lane) for lane in self.routable_lanes for tier in Tier
+        }
         if self.embedding_model:
             reachable.add(self.embedding_model)
         unpriced = sorted(
@@ -575,15 +631,71 @@ class Settings(BaseSettings):
             msg = f"no price configured for model {model!r}; refusing to guess at spend"
             raise ConfigurationError(msg) from None
 
-    def model_for(self, tier: Tier) -> str:
-        """Resolve the model identifier for a tier on the configured lane.
+    @property
+    def routable_lanes(self) -> frozenset[Lane]:
+        """Every lane a request can actually be served from in this deployment.
+
+        Not every lane that is configured. The policy route narrows rather than widens -- see
+        :func:`narrower_of` -- so a sovereign-default deployment cannot serve a request from the
+        cloud lane even with a working key, and the cloud lane is therefore not routable there.
+
+        This is what makes the price guard's question answerable. "Can this deployment reach a
+        model it cannot cost?" was previously asked of the default lane alone, which on a hybrid
+        deployment excluded the sovereign model the router is specifically there to send
+        restricted content to.
+        """
+        if self.lane is Lane.FAKE:
+            return frozenset({Lane.FAKE})
+        lanes = {self.lane}
+        if self.sovereign_base_url and CONTAINMENT[Lane.SOVEREIGN] <= CONTAINMENT[self.lane]:
+            lanes.add(Lane.SOVEREIGN)
+        return frozenset(lanes)
+
+    @property
+    def classification_lane(self) -> Lane:
+        """Where a request is sent to be classified, before any policy decision exists.
+
+        The most contained lane this deployment can reach, which is the only answer available:
+        classification runs before the router, so there is no routed lane to honour and the
+        request has not yet been judged. Treating it as maximally sensitive until something has
+        looked at it is the same fail-closed reading the router applies to an unclassified
+        request.
+
+        What it resolves to, and none of these needed a new setting:
+
+        - **fake** deployment: fake. Nothing leaves the process, and the offline suite is
+          untouched.
+        - **hybrid** deployment: sovereign. The raw request no longer goes to a third party in
+          order to decide whether it was allowed to.
+        - **cloud-only** deployment: cloud. There is nowhere else to send it, so the egress
+          remains and is documented rather than closed. Leak inventory item 14.
+
+        Folded with :func:`narrower_of` rather than sorted, because that function is the one
+        place the ordering is defined and commutativity is what makes the fold well defined
+        whatever order the set iterates in.
+        """
+        return reduce(narrower_of, self.routable_lanes)
+
+    def model_for(self, tier: Tier, *, lane: Lane | None = None) -> str:
+        """Resolve the model identifier for a tier on a lane.
+
+        Args:
+            tier: Capable or cheap.
+            lane: Which lane's identifier to resolve. Defaults to the configured lane.
+
+        The lane argument is not a convenience. A model identifier belongs to the endpoint that
+        serves it, so resolving it against the configured lane while the request travels to
+        another one sends a name the receiving server has never heard of -- and records that
+        name in the audit trail as the model that answered. That was the second half of leak
+        inventory item 13, and fixing only the endpoint would have left it in place.
 
         Raises:
             ConfigurationError: if the lane has no model configured for that tier. Validation
                 makes this unreachable for a well-formed configuration, so it exists to turn a
                 future lane added without models into an obvious failure.
         """
-        match self.lane:
+        resolved = lane or self.lane
+        match resolved:
             case Lane.CLOUD:
                 chosen = (
                     self.cloud_capable_model if tier is Tier.CAPABLE else self.cloud_cheap_model
@@ -593,7 +705,10 @@ class Settings(BaseSettings):
             case Lane.FAKE:
                 return f"fake-{tier.value}"
         if not chosen:
-            msg = f"no model configured for tier {tier.value!r} on lane {self.lane.value!r}"
+            # Names the resolved lane rather than the configured one. A message that said
+            # "cloud" while the caller had asked for the sovereign identifier would send the
+            # reader to the wrong half of their configuration.
+            msg = f"no model configured for tier {tier.value!r} on lane {resolved.value!r}"
             raise ConfigurationError(msg)
         return chosen
 

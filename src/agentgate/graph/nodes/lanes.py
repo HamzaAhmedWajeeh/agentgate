@@ -14,8 +14,9 @@ from __future__ import annotations
 from typing import Protocol
 
 from agentgate.audit.events import Decided, audit_event, digest
-from agentgate.config import Lane, Settings, Tier
+from agentgate.config import Lane, Settings, Tier, narrower_of
 from agentgate.graph.state import AgentState, classification_of
+from agentgate.models.registry import LaneUnavailableError, require_lane
 
 
 class LaneNode(Protocol):
@@ -44,6 +45,28 @@ def bind_lane(node_name: str, lane: Lane, tier: Tier) -> LaneNode:
 
     def bind(state: AgentState, *, settings: Settings) -> AgentState:
         classification = classification_of(state)
+        # What this deployment will actually serve the route from. The route is a policy
+        # decision and is recorded as one; the effective lane is a deployment fact, and the
+        # model identifier has to come from the latter or it names a model the receiving
+        # endpoint has never heard of.
+        effective = narrower_of(lane, settings.lane)
+
+        # Refused here rather than three nodes later. A single-lane deployment has nowhere to
+        # serve a request policy has sent somewhere stricter, and the only alternatives are
+        # refusing and sending it to the lane policy just ruled out -- which is what used to
+        # happen, silently, and is leak inventory item 13. Raising before the event is written
+        # keeps the trail free of a binding this deployment cannot honour.
+        try:
+            require_lane(settings, effective)
+        except LaneUnavailableError as error:
+            msg = (
+                f"policy routed this request to the {effective.value!r} lane and this "
+                f"deployment has not configured it ({error}). A request classified as needing "
+                f"a more contained lane cannot be served from {settings.lane.value!r} instead, "
+                "so the run stops here"
+            )
+            raise LaneUnavailableError(msg) from error
+
         return {
             # Stored as a plain string: state is serialised into checkpoints, and an enum
             # that round-trips through JSON as a string but is compared as an enum is a
@@ -55,10 +78,15 @@ def bind_lane(node_name: str, lane: Lane, tier: Tier) -> LaneNode:
                     decided=Decided.LANE_SELECTED,
                     correlation_id=state.get("correlation_id", ""),
                     input_digest=digest(state.get("request", "")),
-                    model=settings.model_for(tier),
+                    model=settings.model_for(tier, lane=effective),
                     lane=lane.value,
                     detail={
                         "tier": tier.value,
+                        # The deployment's half of the decision, recorded next to policy's so
+                        # a reader can tell "policy chose sovereign" from "sovereign is where
+                        # this deployment could send it anyway".
+                        "effective_lane": effective.value,
+                        "narrowed_by_deployment": effective is not lane,
                         "because": (
                             classification.sensitivity.value
                             if classification is not None

@@ -76,8 +76,26 @@ embedding path accounts against it, but the chat calls in the graph do not yet. 
 the run and session ceilings bound embedding spend and what `make measure` derives, not what a
 run's model calls actually consume.
 
+**There are no retries and no fallbacks on any lane.** `build_resilient_model` composes both and
+is tested against a server returning real HTTP errors, and nothing in `src/` calls it. That is
+ADR 0004 item 15, and `docs/concept-map.md` marks both rows *built, not wired* — a status the
+suite enforces, so adding a caller fails the build until the row is corrected.
+
+**A single-lane deployment cannot serve a restricted request.** If the policy gate routes a
+request to the sovereign lane and no sovereign endpoint is configured, the run stops. The
+alternative is serving it from the lane policy just ruled out, which is what used to happen and
+is ADR 0004 item 13.
+
+**Classification runs on the most contained lane available, which on a cloud-only deployment is
+the cloud.** The raw request is shown to the third party in order to decide whether it was
+allowed to go there. A hybrid deployment classifies on its own endpoint instead; a deployment
+with one lane has nowhere else to send it. ADR 0004 item 14, narrowed rather than closed, and
+pinned by a test that asserts the egress still happens. Classification quality on a self-hosted
+lane is not claimed: a classifier that cannot produce a verdict fails closed to `restricted`, so
+the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
+
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — twelve entries, each
+an inventory of every place something claimed one thing and did another — sixteen entries, each
 established by running something rather than by reading it, each pinned by a test. It says
 plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
 exercised. It is the most honest document here.

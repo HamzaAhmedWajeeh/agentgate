@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggestion rather than silently ignored.
 - `python -m agentgate` prints the resolved configuration as JSON with every secret masked,
   exiting non-zero when the environment does not describe a runnable system.
+- `tests/integration/test_routed_lane_enforcement.py`: the policy gate asserted on the wire,
+  against two stub endpoints with separate request logs. The primary assertion is an absence --
+  canaries visible only to the drafter appearing in no request body the cloud endpoint received --
+  and it is paired with a presence assertion so it cannot pass against a run that drafted nothing.
+- `docs/concept-map.md` gains a third status, **built, not wired**, enforced in both directions by
+  `test_every_built_not_wired_row_exists_and_is_called_from_nowhere`: the symbol must exist and
+  nothing in `src/` outside its own file may mention it. Added because `with_retry` and
+  `with_fallbacks` sat at *done* for four phases on the strength of `build_resilient_model`, which
+  no node has ever called -- so this system performs no retries at all. Item 15, recorded and
+  deliberately not wired here; the constraint for whoever does it is that a fallback must never
+  cross to a less contained lane.
+- Leak inventory items 13 to 16 in ADR 0004. The four share a shape worth naming: a component
+  correct in isolation, tested in isolation, and connected to nothing.
 - `Makefile` with a `make.ps1` shim exposing the same targets on Windows, so the documented
   commands work on every machine the project is developed on.
 - Multi-stage `Dockerfile` producing a 404 MB image that runs as uid 10001, and a Compose
@@ -174,6 +187,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The policy gate's routing decision was recorded but never applied.** `route_by_policy` chose
+  a lane, the lane node wrote it to state, the audit trail reported it, and no node passed `lane=`
+  to the model factory -- so a request routed to the sovereign lane was drafted by whatever the
+  deployment defaulted to. Measured against two stub endpoints: three requests to the cloud
+  endpoint and zero to the sovereign one, while the drafted event read
+  `lane='sovereign' model='cloud-capable-stub'`. The model *identifier* had the same defect, so
+  fixing the endpoint alone would have sent a cloud model's name to the operator's own server.
+  Item 13 of the leak inventory in ADR 0004.
+- The route now **narrows** the configured lane and cannot widen it. `CONTAINMENT` orders the
+  lanes by how far data travels and `narrower_of` takes the minimum, because passing the routed
+  lane through unconditionally makes a sovereign-default deployment call a third party for public
+  content -- a worse leak than the one being fixed. It is also what keeps the offline suite
+  offline.
+- **Classification no longer runs on the configured lane.** It runs before the router, so on a
+  cloud default the raw request went to the third party in order to decide whether it was allowed
+  to go there. It now runs on the most contained lane in `routable_lanes`, with no new setting:
+  fake stays fake, hybrid classifies on its own endpoint, cloud-only classifies on cloud and that
+  remaining egress is recorded as item 14 and pinned by a passing test. The native-structured-
+  output lookup moved with it, because asking a non-native endpoint for it wastes a call rather
+  than failing -- measured as 2 calls and ~733 prompt tokens where 1 and ~537 would do.
+- A sovereign base URL with no model, and a hybrid deployment whose sovereign model has no price,
+  are both startup failures now. Neither was reachable before the routed lane was wired through;
+  the price guard computed "reachable" from the configured lane, which excluded the very model the
+  policy gate exists to route restricted content to.
+- A deployment with one lane now **refuses** a request policy sends somewhere stricter, rather
+  than serving it from the lane policy just ruled out.
+- The audit trail was wrong in both directions and is now checked against the request log rather
+  than against itself. The lane event carries the policy route and the effective lane; the drafted
+  and classified events name where the call actually went and what it asked for.
+- `test_restricted_content_reaches_the_sovereign_lane_in_a_real_run` is renamed to
+  `test_restricted_content_records_the_sovereign_binding_and_its_reason`. It passed throughout the
+  two phases in which restricted content did not reach that lane, because it asserted a state
+  field and the field was always correct. Same treatment as the `filterwarnings` rule in ADR 0011.
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
   pytest subprocess that were not declared settings, and the unknown-variable guard rejected
   them, so every live case failed at configuration before reaching a provider. Both are

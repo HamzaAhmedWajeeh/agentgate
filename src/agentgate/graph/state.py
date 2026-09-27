@@ -58,6 +58,8 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field, ValidationError
 
+from agentgate.config import Lane
+
 
 class Sensitivity(StrEnum):
     """How restricted the request's content is.
@@ -212,7 +214,14 @@ class AgentState(TypedDict, total=False):
 
     lane: str
     """Resolved by the policy router alone. A string rather than the Lane enum because state
-    is serialised into checkpoints and must survive a round trip through JSON."""
+    is serialised into checkpoints and must survive a round trip through JSON.
+
+    **What policy permits, not necessarily what answered.** The deployment narrows this again
+    when a model is constructed, so a run on the fake lane records ``"cloud"`` here and reaches
+    no network at all. Reading it as the endpoint is precisely the confusion that hid
+    leak-inventory item 13: every test of the policy gate asserted this field, and the field was
+    correct the whole time. Read with :func:`lane_of`; for where a call actually went, read the
+    ``lane`` on that node's audit event."""
 
     sub_questions: list[str]
     """Written by the supervisor when it dispatches research."""
@@ -281,6 +290,27 @@ def outcomes_of(state: AgentState) -> list[ResearchOutcome]:
         for raw in state.get("research_outcomes", [])
         if (parsed := ResearchOutcome.parse(raw)) is not None
     ]
+
+
+def lane_of(state: AgentState) -> Lane:
+    """The lane the policy router chose, parsed.
+
+    Anything absent or unrecognised reads as ``SOVEREIGN``, which is the most contained lane a
+    real request can be routed to. Fails closed for the same reason :func:`decision_of` does,
+    and the failure is loud rather than quiet: on a deployment with no sovereign endpoint
+    configured, this resolves to a lane ``build_model`` refuses to construct, so an unreadable
+    routing decision stops the run instead of falling back to the default lane -- which, on the
+    deployment where that matters, is the cloud.
+
+    Note what this is *not*. It is the lane policy permits, not necessarily the one that
+    answered: the deployment narrows it again at construction time. Reading this value as "where
+    the request went" is the mistake that made item 13 invisible for two phases.
+    """
+    raw = str(state.get("lane", "") or "")
+    try:
+        return Lane(raw)
+    except ValueError:
+        return Lane.SOVEREIGN
 
 
 def decision_of(state: AgentState) -> Decision:

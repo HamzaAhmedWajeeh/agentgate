@@ -18,6 +18,7 @@ import pytest
 from pydantic import ValidationError
 
 from agentgate.config import (
+    CONTAINMENT,
     ENV_PREFIX,
     CallClass,
     CheckpointerBackend,
@@ -29,6 +30,7 @@ from agentgate.config import (
     Tier,
     VectorBackend,
     get_settings,
+    narrower_of,
 )
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
@@ -124,6 +126,48 @@ def test_sovereign_lane_without_an_endpoint_is_rejected() -> None:
     message = str(caught.value)
     assert "AGENTGATE_SOVEREIGN_BASE_URL" in message
     assert "AGENTGATE_SOVEREIGN_MODEL" in message
+
+
+def test_a_hybrid_deployment_without_a_sovereign_model_will_not_start() -> None:
+    """A lane the router can choose is a lane that must be fully specified.
+
+    This configuration was valid until the routed lane was wired through, because nothing ever
+    built a sovereign model on a cloud-default deployment -- so the missing identifier was never
+    asked for. It is the shape an operator actually writes: the endpoint is the thing they think
+    of as "turning the sovereign lane on".
+
+    Rejected at startup rather than at the first restricted request, which is the only difference
+    that matters. The alternative fails inside the graph, on the one request where failing is
+    least acceptable.
+    """
+    with pytest.raises(ValidationError, match="AGENTGATE_SOVEREIGN_MODEL") as caught:
+        build(
+            lane="cloud",
+            openai_api_key="sk-test",
+            cloud_capable_model="a-cloud-model",
+            cloud_cheap_model="a-cloud-model",
+            sovereign_base_url="http://localhost:11434/v1",
+            model_prices_usd_per_million=priced("a-cloud-model"),
+        )
+
+    assert "route" in str(caught.value), "the message should say why the model is now required"
+
+
+def test_a_cloud_deployment_with_no_sovereign_endpoint_is_still_valid() -> None:
+    """The guard fires on a half-configured sovereign lane, not on the absence of one.
+
+    Without this, the previous test would pass just as happily against a validator that rejected
+    every cloud deployment, which is the failure mode of a guard written to a single example.
+    """
+    settings = build(
+        lane="cloud",
+        openai_api_key="sk-test",
+        cloud_capable_model="a-cloud-model",
+        cloud_cheap_model="a-cloud-model",
+        model_prices_usd_per_million=priced("a-cloud-model"),
+    )
+
+    assert settings.routable_lanes == {Lane.CLOUD}
 
 
 def test_sovereign_lane_needs_no_api_key() -> None:
@@ -264,6 +308,49 @@ def test_a_networked_lane_without_prices_will_not_start() -> None:
             sovereign_base_url="http://localhost:9/v1",
             sovereign_model="an-unpriced-model",
         )
+
+
+def test_a_hybrid_deployment_must_price_the_lane_it_routes_restricted_content_to() -> None:
+    """The price guard was asking about the wrong set.
+
+    "Reachable" was read off the configured lane, so on a hybrid deployment the sovereign model
+    -- the entire reason the policy gate exists -- was outside the guard. Wiring the routed lane
+    through is what makes this unpriced model genuinely reachable, so the guard had to be told
+    about the set that widened.
+    """
+    with pytest.raises(ValidationError, match="an-unpriced-sovereign-model"):
+        build(
+            lane="cloud",
+            openai_api_key="sk-test",
+            cloud_capable_model="a-cloud-model",
+            cloud_cheap_model="a-cloud-model",
+            sovereign_base_url="http://localhost:11434/v1",
+            sovereign_model="an-unpriced-sovereign-model",
+            model_prices_usd_per_million=priced("a-cloud-model"),
+        )
+
+
+def test_a_sovereign_deployment_need_not_price_a_cloud_model_it_cannot_reach() -> None:
+    """Routable is not the same as configured, and the asymmetry is the point.
+
+    A sovereign-default deployment may hold a working key and cloud model identifiers -- for a
+    different environment, or from a copied ``.env``. The route narrows and never widens, so no
+    request can be served from the cloud lane there, and demanding a price for a model this
+    deployment cannot call would be a guard inventing work. The absence assertion is the one that
+    matters: it fails if ``routable_lanes`` ever starts answering "every lane I can see".
+    """
+    settings = build(
+        lane="sovereign",
+        sovereign_base_url="http://localhost:11434/v1",
+        sovereign_model="a-local-model",
+        openai_api_key="sk-test",
+        cloud_capable_model="an-unpriced-cloud-model",
+        cloud_cheap_model="an-unpriced-cloud-model",
+        model_prices_usd_per_million=priced("a-local-model"),
+    )
+
+    assert settings.routable_lanes == {Lane.SOVEREIGN}
+    assert Lane.CLOUD not in settings.routable_lanes
 
 
 def test_the_fake_lane_needs_no_prices_because_it_is_free() -> None:
@@ -489,3 +576,142 @@ def test_operator_error_does_not_wrap_a_leaked_secret(
         get_settings()
 
     assert "sk-do-not-leak-me" not in str(caught.value)
+
+
+# --------------------------------------------------------------------------- lane containment
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        (Lane.CLOUD, Lane.SOVEREIGN, Lane.SOVEREIGN),
+        (Lane.SOVEREIGN, Lane.CLOUD, Lane.SOVEREIGN),
+        (Lane.FAKE, Lane.CLOUD, Lane.FAKE),
+        (Lane.CLOUD, Lane.FAKE, Lane.FAKE),
+        (Lane.FAKE, Lane.SOVEREIGN, Lane.FAKE),
+        (Lane.SOVEREIGN, Lane.FAKE, Lane.FAKE),
+        (Lane.CLOUD, Lane.CLOUD, Lane.CLOUD),
+        (Lane.SOVEREIGN, Lane.SOVEREIGN, Lane.SOVEREIGN),
+        (Lane.FAKE, Lane.FAKE, Lane.FAKE),
+    ],
+)
+def test_narrowing_is_symmetric_and_always_picks_the_more_contained_lane(
+    first: Lane, second: Lane, expected: Lane
+) -> None:
+    """Every pair, in both orders, because the asymmetric version is the bug.
+
+    A function that honoured its first argument would pass a test that only ever passed the
+    router's choice first -- which is exactly how it would be called at the one site that
+    matters.
+    """
+    assert narrower_of(first, second) is expected
+
+
+def test_every_lane_has_a_containment_rank() -> None:
+    """A lane added without one would raise a KeyError inside model construction.
+
+    Not a hypothetical: ``narrower_of`` indexes the mapping directly rather than using ``get``
+    with a default, because a default here would silently rank an unknown lane alongside a known
+    one and the question being asked is how far data travels.
+    """
+    assert set(CONTAINMENT) == set(Lane)
+
+
+def test_the_containment_order_puts_the_fake_lane_below_every_real_one() -> None:
+    assert CONTAINMENT[Lane.FAKE] < CONTAINMENT[Lane.SOVEREIGN] < CONTAINMENT[Lane.CLOUD]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({}, Lane.FAKE, id="fake-deployment"),
+        pytest.param(
+            {
+                "lane": "cloud",
+                "openai_api_key": "sk-test",
+                "cloud_capable_model": "c",
+                "cloud_cheap_model": "c",
+                "model_prices_usd_per_million": {"c": {"input": 0.1, "output": 0.4}},
+            },
+            Lane.CLOUD,
+            id="cloud-only-has-nowhere-else",
+        ),
+        pytest.param(
+            {
+                "lane": "cloud",
+                "openai_api_key": "sk-test",
+                "cloud_capable_model": "c",
+                "cloud_cheap_model": "c",
+                "sovereign_base_url": "http://localhost:11434/v1",
+                "sovereign_model": "s",
+                "model_prices_usd_per_million": {
+                    "c": {"input": 0.1, "output": 0.4},
+                    "s": {"input": 0.0, "output": 0.0},
+                },
+            },
+            Lane.SOVEREIGN,
+            id="hybrid-classifies-on-its-own-endpoint",
+        ),
+        pytest.param(
+            {
+                "lane": "sovereign",
+                "sovereign_base_url": "http://localhost:11434/v1",
+                "sovereign_model": "s",
+                "model_prices_usd_per_million": {"s": {"input": 0.0, "output": 0.0}},
+            },
+            Lane.SOVEREIGN,
+            id="sovereign-only",
+        ),
+    ],
+)
+def test_classification_runs_on_the_most_contained_lane_available(
+    overrides: dict[str, object], expected: Lane
+) -> None:
+    """Where a request goes to be judged, before anything has judged it.
+
+    Every case matters and none of them needed a setting. The cloud-only row is the one that
+    stays open: there is nowhere else to send it, so the egress remains and is recorded as leak
+    inventory item 14 rather than described as fixed because the hybrid case improved.
+    """
+    assert build(**overrides).classification_lane is expected
+
+
+def test_the_classification_lane_is_never_less_contained_than_the_default() -> None:
+    """The property that has to hold for every configuration, stated once.
+
+    A parametrised list proves the four cases someone thought of. This states the invariant, so a
+    fifth lane or a changed `routable_lanes` cannot introduce a configuration where the request
+    is shown to something further away than the deployment's own default.
+    """
+    settings = build(
+        lane="cloud",
+        openai_api_key="sk-test",
+        cloud_capable_model="c",
+        cloud_cheap_model="c",
+        sovereign_base_url="http://localhost:11434/v1",
+        sovereign_model="s",
+        model_prices_usd_per_million={
+            "c": {"input": 0.1, "output": 0.4},
+            "s": {"input": 0.0, "output": 0.0},
+        },
+    )
+
+    assert CONTAINMENT[settings.classification_lane] <= CONTAINMENT[settings.lane]
+    assert settings.classification_lane in settings.routable_lanes
+
+
+def test_the_model_identifier_follows_the_lane_it_is_asked_for() -> None:
+    """The half of item 13 that a lane-aware endpoint alone would have left in place."""
+    settings = build(
+        lane="cloud",
+        openai_api_key="sk-test",
+        cloud_capable_model="a-cloud-model",
+        cloud_cheap_model="a-cloud-model",
+        sovereign_base_url="http://localhost:11434/v1",
+        sovereign_model="a-local-model",
+        model_prices_usd_per_million=priced("a-cloud-model", "a-local-model"),
+    )
+
+    assert settings.model_for(Tier.CAPABLE) == "a-cloud-model"
+    assert settings.model_for(Tier.CAPABLE, lane=Lane.SOVEREIGN) == "a-local-model"
+    assert settings.model_for(Tier.CHEAP, lane=Lane.FAKE) == "fake-cheap"

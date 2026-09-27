@@ -27,7 +27,7 @@ from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import Runnable
 
-from agentgate.config import CallClass, Lane, Settings, Tier
+from agentgate.config import CallClass, Lane, Settings, Tier, narrower_of
 from agentgate.errors import AgentgateError
 from agentgate.models.fake import FakeChatModel
 
@@ -209,6 +209,27 @@ class ModelFactory(Protocol):
     ) -> BaseChatModel: ...
 
 
+def require_lane(settings: Settings, lane: Lane) -> None:
+    """Raise unless this configuration can construct ``lane``.
+
+    Extracted from :func:`build_model` so the lane-binding node can ask the same question
+    without duplicating the answer. The alternative was a second copy of "what makes a lane
+    available", which is the shape ``lanes.py`` already warns about in its own docstring: a
+    policy with two homes eventually gives two answers.
+
+    Raises:
+        LaneUnavailableError: if the lane cannot be built from this configuration.
+    """
+    if lane is Lane.FAKE:
+        return
+    if lane is Lane.CLOUD and settings.openai_api_key is None:
+        msg = "cloud lane requested but no API key is configured"
+        raise LaneUnavailableError(msg)
+    if lane is Lane.SOVEREIGN and settings.sovereign_base_url is None:
+        msg = "sovereign lane requested but no base URL is configured"
+        raise LaneUnavailableError(msg)
+
+
 def build_model(
     settings: Settings,
     tier: Tier,
@@ -224,21 +245,28 @@ def build_model(
             boundary, not a promise that one is more expensive.
         call_class: Determines the output ceiling, so a routing decision cannot spend a
             synthesis-sized budget.
-        lane: Overrides the configured default, for when the policy router has sent an
-            individual request somewhere stricter.
+        lane: What the policy router decided this individual request may reach. It **narrows**
+            the configured default and never widens it, so passing ``CLOUD`` on a sovereign
+            deployment yields a sovereign model rather than a cloud one. See
+            :func:`~agentgate.config.narrower_of` for why that direction is the only safe one.
 
     Raises:
         LaneUnavailableError: if the lane cannot be built from this configuration.
     """
-    chosen = lane or settings.lane
-    model_id = settings.model_for(tier)
+    chosen = narrower_of(lane, settings.lane) if lane is not None else settings.lane
     max_tokens = settings.max_tokens_for(call_class)
+
+    # Availability first, then the identifier. The order answers the operator's question in the
+    # right order: someone who routed a restricted request to a sovereign lane they never
+    # configured needs to hear that the lane is missing, not that a model name is.
+    require_lane(settings, chosen)
+    model_id = settings.model_for(tier, lane=chosen)
 
     if chosen is Lane.FAKE:
         return FakeChatModel(model_name=model_id)
 
     if chosen is Lane.CLOUD:
-        if settings.openai_api_key is None:
+        if settings.openai_api_key is None:  # pragma: no cover - require_lane checked this
             msg = "cloud lane requested but no API key is configured"
             raise LaneUnavailableError(msg)
         return _init_openai_compatible(
@@ -249,7 +277,7 @@ def build_model(
             max_tokens=max_tokens,
         )
 
-    if settings.sovereign_base_url is None:
+    if settings.sovereign_base_url is None:  # pragma: no cover - require_lane checked this
         msg = "sovereign lane requested but no base URL is configured"
         raise LaneUnavailableError(msg)
     return _init_openai_compatible(
@@ -282,7 +310,11 @@ def _init_openai_compatible(
         temperature=settings.temperature,
         max_tokens=max_tokens,
         timeout=settings.request_timeout_seconds,
-        max_retries=0,  # retries are applied by build_resilient_model, in one place
+        # Zero, and nothing adds them back. `build_resilient_model` would, and no node calls
+        # it -- so this system performs no retries at all, on any lane. The comment here used to
+        # say retries were applied there "in one place", which was true about the design and
+        # false about the running system for four phases. Leak inventory item 15.
+        max_retries=0,
     )
 
 

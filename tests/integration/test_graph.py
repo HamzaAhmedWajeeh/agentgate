@@ -104,8 +104,24 @@ def test_the_classifiers_verdict_reaches_the_lane_binding(
     assert result["lane"] == expected_lane
 
 
-def test_restricted_content_reaches_the_sovereign_lane_in_a_real_run() -> None:
-    """The thesis, executed rather than asserted about."""
+def test_restricted_content_records_the_sovereign_binding_and_its_reason() -> None:
+    """Renamed, because the old name claimed something the body never checked.
+
+    It was `test_restricted_content_reaches_the_sovereign_lane_in_a_real_run`, and it passed
+    throughout the two phases in which restricted content did not reach the sovereign lane at
+    all. Nothing about it was wrong: the state field it asserts is written correctly, and the
+    reason is recorded correctly. The name was the defect -- "reaches the lane" describes an
+    endpoint, and this run has no endpoints, because the scripted factory here ignores the lane
+    argument entirely and answers everything in-process.
+
+    Given the same treatment as the `filterwarnings` rule in ADR 0011: a check that reads as
+    enforcement and enforces nothing is worse than no check, so it is renamed to what it does
+    rather than left in looking reassuring. What it does is still worth having -- the binding and
+    its stated reason are the audit record a reviewer reads.
+
+    Enforcement lives in `test_routed_lane_enforcement.py`, which asserts on two endpoints'
+    request logs and cannot pass without a model call going to the right server.
+    """
     result = run(
         settings_with(),
         "Draft a note about account 4471 and its outstanding balance.",
@@ -115,6 +131,10 @@ def test_restricted_content_reaches_the_sovereign_lane_in_a_real_run() -> None:
     assert result["lane"] == Lane.SOVEREIGN.value
     lane_event = next(e for e in result["audit_trail"] if e["decided"] == "lane_selected")
     assert lane_event["detail"]["because"] == "restricted"
+    # The deployment's half, recorded alongside policy's. On the fake lane the route is narrowed
+    # to fake, and saying so is what stops this test being read as an endpoint claim again.
+    assert lane_event["detail"]["effective_lane"] == Lane.FAKE.value
+    assert lane_event["detail"]["narrowed_by_deployment"] is True
 
 
 def test_an_unparseable_verdict_still_lands_on_the_sovereign_lane() -> None:
