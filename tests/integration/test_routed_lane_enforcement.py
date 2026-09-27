@@ -35,9 +35,10 @@ from typing import Any
 import pytest
 from tests.doubles.openai_compatible import StubBehaviour, StubServer, running_stub
 
-from agentgate.config import Lane, Settings
+from agentgate.config import Lane, Settings, Tier
 from agentgate.graph.build import build_checkpointer, build_graph
 from agentgate.graph.state import Finding, initial_state
+from agentgate.models.registry import LaneUnavailableError
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
 
@@ -87,8 +88,19 @@ def cloud() -> Iterator[StubServer]:
 
 @pytest.fixture
 def sovereign() -> Iterator[StubServer]:
-    """The operator's own endpoint."""
-    with running_stub(StubBehaviour(reply={"answer": "A draft of the refund letter."})) as server:
+    """The operator's own endpoint.
+
+    Replies with a classification verdict rather than a draft, because on a hybrid deployment
+    this is the lane classification runs on. A stub that answered the classifier with prose sent
+    the classifier into its fail-closed branch, which routes restricted -- the same destination
+    the test was checking for, reached without a verdict being parsed at all. The trail assertion
+    caught it; nothing else would have.
+
+    Each stub returns one reply to every request, so the draft on this lane is that verdict
+    wrapped in prose. Harmless here: no assertion in this file reads draft *content*, only which
+    endpoint was asked and what the request body contained.
+    """
+    with running_stub(StubBehaviour(reply=verdict("restricted"))) as server:
         yield server
 
 
@@ -253,15 +265,14 @@ def test_the_audit_trail_names_the_endpoint_that_actually_answered(
     result = run_to_the_gate(settings, RESTRICTED_REQUEST)
 
     asked_of_sovereign = models_asked_of(sovereign)
-    asked_of_cloud = models_asked_of(cloud)
-    assert asked_of_sovereign and asked_of_cloud, "precondition: both endpoints were called"
+    assert asked_of_sovereign, "precondition: the sovereign endpoint was called"
 
     drafted = next(e for e in result["audit_trail"] if e["decided"] == "drafted")
     assert drafted["lane"] == Lane.SOVEREIGN.value
     assert drafted["model"] in asked_of_sovereign, (
         "the drafted event names a model the endpoint it claims to have used was never asked for"
     )
-    assert drafted["model"] not in asked_of_cloud
+    assert drafted["model"] not in models_asked_of(cloud)
     assert drafted["detail"]["policy_route"] == Lane.SOVEREIGN.value
     assert drafted["detail"]["lane_narrowed_by_deployment"] is False
 
@@ -271,34 +282,159 @@ def test_the_audit_trail_names_the_endpoint_that_actually_answered(
     assert lane_event["model"] == SOVEREIGN_MODEL
     assert lane_event["detail"]["effective_lane"] == Lane.SOVEREIGN.value
 
-    # The classifier's event is the one that was always true: it really does run on the
-    # configured lane, and says so. Asserted so that a future change which starts routing the
-    # classifier has to come through here.
+    # The classifier's event was the one that was always true -- it ran on the configured lane
+    # and said so. Since the classification lane was narrowed it says something different, and
+    # this asserts the new claim against the same request log: it ran on the sovereign lane, and
+    # the model it names is one that endpoint was asked for.
     classified = next(e for e in result["audit_trail"] if e["decided"] == "classified")
-    assert classified["lane"] == Lane.CLOUD.value
-    assert classified["model"] in asked_of_cloud
+    assert classified["lane"] == Lane.SOVEREIGN.value
+    assert classified["model"] in asked_of_sovereign
+    assert classified["detail"]["classified_on_lane"] == Lane.SOVEREIGN.value
+    assert classified["detail"]["deployment_default_lane"] == Lane.CLOUD.value
+    assert classified["detail"]["classification_failed"] is None, (
+        "the verdict was parsed, so the routing under test came from a classification rather "
+        "than from failing closed"
+    )
 
 
-# ------------------------------------------------- the gap this test file does not close
+# ------------------------------------------------------------------- the classification lane
 
 
-def test_the_classifier_sends_the_raw_request_to_the_configured_lane(
+def test_the_classifier_never_shows_the_raw_request_to_the_cloud_endpoint(
     cloud: StubServer, sovereign: StubServer
 ) -> None:
-    """Recorded as a passing assertion because it is true, not because it is acceptable.
+    """The inversion of what this file first recorded, and the reason to have recorded it.
 
-    Classification runs before the policy decision exists, so on a cloud-default deployment the
-    raw request -- including anything restricted in it -- is sent to the third party in order to
-    decide whether it was allowed to go there. Leak inventory item 14.
+    The first version of this test asserted that all three request canaries *did* reach the
+    cloud endpoint, because they did: classification ran on the configured lane, so a
+    cloud-default deployment showed a third party the raw request in order to decide whether it
+    was allowed to see it. Writing that down as a passing assertion is what makes closing it a
+    dated, visible change to a named test rather than an improvement nobody can point at.
 
-    It is pinned here so that closing it is a visible change to a test that asserts the
-    opposite, rather than a silent improvement nobody can date.
+    On a hybrid deployment the cloud endpoint should now see nothing whatsoever for a restricted
+    request: not the draft, and not the classification either.
     """
     settings = hybrid_settings(cloud, sovereign, default=Lane.CLOUD.value)
 
     run_to_the_gate(settings, RESTRICTED_REQUEST)
 
-    assert canaries_seen_by(cloud, REQUEST_CANARIES) == sorted(REQUEST_CANARIES), (
-        "the pre-classification egress described by item 14 no longer happens; if that is "
-        "deliberate, this test is the one to rewrite"
+    assert canaries_seen_by(sovereign, REQUEST_CANARIES) == sorted(REQUEST_CANARIES), (
+        "the request reached no endpoint at all; the absence assertion below would pass for "
+        "the wrong reason"
     )
+    assert canaries_seen_by(cloud, REQUEST_CANARIES) == []
+    assert bodies(cloud) == [], (
+        "a restricted request on a hybrid deployment reached the third-party endpoint; after "
+        "the classification lane was narrowed there is no node left that should call it"
+    )
+
+
+def test_classification_does_not_take_the_native_path_on_a_lane_recorded_as_non_native(
+    cloud: StubServer, sovereign: StubServer
+) -> None:
+    """The capability lookup has to follow the classification lane too.
+
+    ``supports()`` was asked about the configured lane. Left that way, moving classification to
+    the sovereign lane would ask for native structured output from an endpoint measured as not
+    having it -- which does not fail, it falls through to the repair loop after wasting a call.
+    Measured against this stub: 2 calls and ~733 prompt tokens where 1 and ~537 would do, on
+    every classification, silently.
+
+    ``response_format`` is the discriminator because it is what the native path puts on the
+    wire; the repair path sends the schema as a system message instead.
+    """
+    settings = hybrid_settings(cloud, sovereign, default=Lane.CLOUD.value)
+
+    run_to_the_gate(settings, RESTRICTED_REQUEST)
+
+    assert sovereign.behaviour.requests_seen, "nothing reached the sovereign endpoint"
+    offenders = [body for body in sovereign.behaviour.requests_seen if "response_format" in body]
+    assert offenders == [], (
+        "classification asked a lane recorded as lacking native structured output for it; "
+        "the capability lookup is still reading the configured lane"
+    )
+
+
+# ---------------------------------------------- the egress that remains, recorded as one
+
+
+def test_a_cloud_only_deployment_classifies_on_the_cloud_lane_as_documented_egress(
+    cloud: StubServer,
+) -> None:
+    """Item 14, narrowed rather than closed, and this is the part that stays open.
+
+    A deployment with no sovereign endpoint has nowhere else to send a request to be judged, so
+    the raw content still goes to the third party before any policy decision exists. That is not
+    fixable in code -- it is a property of having one lane -- so it is recorded here as a
+    passing assertion and in ADR 0004 item 14, rather than described as solved because the
+    hybrid case improved.
+
+    The ``response_format`` assertion is the control for the test above. The cloud lane is
+    recorded as *having* native structured output, so it must appear here. Without this, a
+    rename of that wire field by `langchain-openai` would make the absence assertion above pass
+    against a field that no longer exists -- which is leak inventory item 2, exactly.
+    """
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        lane=Lane.CLOUD.value,
+        openai_api_key="not-required",
+        openai_base_url=cloud.base_url,
+        cloud_capable_model=CLOUD_CAPABLE,
+        cloud_cheap_model=CLOUD_CHEAP,
+        model_prices_usd_per_million={
+            CLOUD_CAPABLE: {"input": 1.0, "output": 4.0},
+            CLOUD_CHEAP: {"input": 0.1, "output": 0.4},
+        },
+    )
+    assert settings.classification_lane is Lane.CLOUD, "precondition: nowhere else to classify"
+
+    # And then it refuses, which is the other half of the story. Policy sends the request
+    # somewhere more contained, there is no such lane, and the only alternative to stopping is
+    # serving it from the lane policy just ruled out -- which is what used to happen.
+    with pytest.raises(LaneUnavailableError, match="has not configured it"):
+        run_to_the_gate(settings, RESTRICTED_REQUEST)
+
+    assert canaries_seen_by(cloud, REQUEST_CANARIES) == sorted(REQUEST_CANARIES), (
+        "the pre-classification egress described by item 14 no longer happens on a cloud-only "
+        "deployment; if that is deliberate, this test and item 14 are what to rewrite"
+    )
+    assert any("response_format" in body for body in cloud.behaviour.requests_seen), (
+        "the native path put no response_format on the wire, so the absence assertion in "
+        "test_classification_does_not_take_the_native_path... is watching a field that is no "
+        "longer sent -- see leak inventory item 2"
+    )
+
+
+def test_a_hybrid_deployment_still_uses_the_cloud_lane_for_public_content(
+    cloud: StubServer, sovereign: StubServer
+) -> None:
+    """Non-vacuity for every absence assertion in this file.
+
+    All of them would pass just as happily against a deployment whose cloud endpoint was
+    unreachable, misconfigured, or never called for any reason. This is the one test that
+    requires the cloud endpoint to be genuinely in use: public content is classified on the
+    sovereign lane, because that is the more contained one, and then drafted on the cloud lane,
+    because that is what policy chose and the deployment permits.
+    """
+    cloud.behaviour.reply = {"answer": "A summary of the published refund window."}
+    sovereign.behaviour.reply = verdict("public", pii=False)
+    settings = hybrid_settings(cloud, sovereign, default=Lane.CLOUD.value)
+
+    result = run_to_the_gate(settings, PUBLIC_REQUEST)
+
+    assert result["lane"] == Lane.CLOUD.value, "precondition: public content routes to cloud"
+    assert models_asked_of(sovereign) == [SOVEREIGN_MODEL], (
+        "classification should have run on the sovereign lane and nothing else should have"
+    )
+    assert models_asked_of(cloud) == [CLOUD_CAPABLE], (
+        "the draft should have been asked of the cloud lane's capable tier"
+    )
+
+    # Note which tier answered. `route_by_policy` returned "cloud_cheap" for this request and the
+    # drafter asked for the capable one, because the routed *tier* is not wired through either --
+    # `bind_lane` binds one and no channel carries it. Invisible in a deployment where both cloud
+    # tiers name the same model, which is the reference configuration. Leak inventory item 16;
+    # asserted here as the current truth so that wiring it has to come through this line.
+    lane_event = next(e for e in result["audit_trail"] if e["decided"] == "lane_selected")
+    assert lane_event["detail"]["tier"] == Tier.CHEAP.value
+    assert models_asked_of(cloud) == [CLOUD_CAPABLE]

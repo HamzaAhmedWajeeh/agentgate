@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 from difflib import get_close_matches
 from enum import StrEnum
-from functools import lru_cache
+from functools import lru_cache, reduce
 from pathlib import Path
 from typing import Annotated, Any, Final
 
@@ -650,6 +650,31 @@ class Settings(BaseSettings):
         if self.sovereign_base_url and CONTAINMENT[Lane.SOVEREIGN] <= CONTAINMENT[self.lane]:
             lanes.add(Lane.SOVEREIGN)
         return frozenset(lanes)
+
+    @property
+    def classification_lane(self) -> Lane:
+        """Where a request is sent to be classified, before any policy decision exists.
+
+        The most contained lane this deployment can reach, which is the only answer available:
+        classification runs before the router, so there is no routed lane to honour and the
+        request has not yet been judged. Treating it as maximally sensitive until something has
+        looked at it is the same fail-closed reading the router applies to an unclassified
+        request.
+
+        What it resolves to, and none of these needed a new setting:
+
+        - **fake** deployment: fake. Nothing leaves the process, and the offline suite is
+          untouched.
+        - **hybrid** deployment: sovereign. The raw request no longer goes to a third party in
+          order to decide whether it was allowed to.
+        - **cloud-only** deployment: cloud. There is nowhere else to send it, so the egress
+          remains and is documented rather than closed. Leak inventory item 14.
+
+        Folded with :func:`narrower_of` rather than sorted, because that function is the one
+        place the ordering is defined and commutativity is what makes the fold well defined
+        whatever order the set iterates in.
+        """
+        return reduce(narrower_of, self.routable_lanes)
 
     def model_for(self, tier: Tier, *, lane: Lane | None = None) -> str:
         """Resolve the model identifier for a tier on a lane.

@@ -621,6 +621,85 @@ def test_the_containment_order_puts_the_fake_lane_below_every_real_one() -> None
     assert CONTAINMENT[Lane.FAKE] < CONTAINMENT[Lane.SOVEREIGN] < CONTAINMENT[Lane.CLOUD]
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({}, Lane.FAKE, id="fake-deployment"),
+        pytest.param(
+            {
+                "lane": "cloud",
+                "openai_api_key": "sk-test",
+                "cloud_capable_model": "c",
+                "cloud_cheap_model": "c",
+                "model_prices_usd_per_million": {"c": {"input": 0.1, "output": 0.4}},
+            },
+            Lane.CLOUD,
+            id="cloud-only-has-nowhere-else",
+        ),
+        pytest.param(
+            {
+                "lane": "cloud",
+                "openai_api_key": "sk-test",
+                "cloud_capable_model": "c",
+                "cloud_cheap_model": "c",
+                "sovereign_base_url": "http://localhost:11434/v1",
+                "sovereign_model": "s",
+                "model_prices_usd_per_million": {
+                    "c": {"input": 0.1, "output": 0.4},
+                    "s": {"input": 0.0, "output": 0.0},
+                },
+            },
+            Lane.SOVEREIGN,
+            id="hybrid-classifies-on-its-own-endpoint",
+        ),
+        pytest.param(
+            {
+                "lane": "sovereign",
+                "sovereign_base_url": "http://localhost:11434/v1",
+                "sovereign_model": "s",
+                "model_prices_usd_per_million": {"s": {"input": 0.0, "output": 0.0}},
+            },
+            Lane.SOVEREIGN,
+            id="sovereign-only",
+        ),
+    ],
+)
+def test_classification_runs_on_the_most_contained_lane_available(
+    overrides: dict[str, object], expected: Lane
+) -> None:
+    """Where a request goes to be judged, before anything has judged it.
+
+    Every case matters and none of them needed a setting. The cloud-only row is the one that
+    stays open: there is nowhere else to send it, so the egress remains and is recorded as leak
+    inventory item 14 rather than described as fixed because the hybrid case improved.
+    """
+    assert build(**overrides).classification_lane is expected
+
+
+def test_the_classification_lane_is_never_less_contained_than_the_default() -> None:
+    """The property that has to hold for every configuration, stated once.
+
+    A parametrised list proves the four cases someone thought of. This states the invariant, so a
+    fifth lane or a changed `routable_lanes` cannot introduce a configuration where the request
+    is shown to something further away than the deployment's own default.
+    """
+    settings = build(
+        lane="cloud",
+        openai_api_key="sk-test",
+        cloud_capable_model="c",
+        cloud_cheap_model="c",
+        sovereign_base_url="http://localhost:11434/v1",
+        sovereign_model="s",
+        model_prices_usd_per_million={
+            "c": {"input": 0.1, "output": 0.4},
+            "s": {"input": 0.0, "output": 0.0},
+        },
+    )
+
+    assert CONTAINMENT[settings.classification_lane] <= CONTAINMENT[settings.lane]
+    assert settings.classification_lane in settings.routable_lanes
+
+
 def test_the_model_identifier_follows_the_lane_it_is_asked_for() -> None:
     """The half of item 13 that a lane-aware endpoint alone would have left in place."""
     settings = build(

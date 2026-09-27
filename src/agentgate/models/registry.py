@@ -209,6 +209,27 @@ class ModelFactory(Protocol):
     ) -> BaseChatModel: ...
 
 
+def require_lane(settings: Settings, lane: Lane) -> None:
+    """Raise unless this configuration can construct ``lane``.
+
+    Extracted from :func:`build_model` so the lane-binding node can ask the same question
+    without duplicating the answer. The alternative was a second copy of "what makes a lane
+    available", which is the shape ``lanes.py`` already warns about in its own docstring: a
+    policy with two homes eventually gives two answers.
+
+    Raises:
+        LaneUnavailableError: if the lane cannot be built from this configuration.
+    """
+    if lane is Lane.FAKE:
+        return
+    if lane is Lane.CLOUD and settings.openai_api_key is None:
+        msg = "cloud lane requested but no API key is configured"
+        raise LaneUnavailableError(msg)
+    if lane is Lane.SOVEREIGN and settings.sovereign_base_url is None:
+        msg = "sovereign lane requested but no base URL is configured"
+        raise LaneUnavailableError(msg)
+
+
 def build_model(
     settings: Settings,
     tier: Tier,
@@ -235,33 +256,32 @@ def build_model(
     chosen = narrower_of(lane, settings.lane) if lane is not None else settings.lane
     max_tokens = settings.max_tokens_for(call_class)
 
-    # The identifier is resolved inside each branch, after that lane's endpoint has been
-    # checked, and on the chosen lane rather than the configured one. Both details are load
-    # bearing. Resolving on the configured lane sends a name the receiving server has never
-    # heard of, which was the second half of item 13. Resolving *before* the endpoint check
-    # answers the wrong question first: an operator who routed a restricted request to a
-    # sovereign lane they never configured gets told their model identifier is missing, when
-    # what is missing is the lane.
+    # Availability first, then the identifier. The order answers the operator's question in the
+    # right order: someone who routed a restricted request to a sovereign lane they never
+    # configured needs to hear that the lane is missing, not that a model name is.
+    require_lane(settings, chosen)
+    model_id = settings.model_for(tier, lane=chosen)
+
     if chosen is Lane.FAKE:
-        return FakeChatModel(model_name=settings.model_for(tier, lane=chosen))
+        return FakeChatModel(model_name=model_id)
 
     if chosen is Lane.CLOUD:
-        if settings.openai_api_key is None:
+        if settings.openai_api_key is None:  # pragma: no cover - require_lane checked this
             msg = "cloud lane requested but no API key is configured"
             raise LaneUnavailableError(msg)
         return _init_openai_compatible(
-            settings.model_for(tier, lane=chosen),
+            model_id,
             api_key=settings.openai_api_key.get_secret_value(),
             base_url=settings.openai_base_url,
             settings=settings,
             max_tokens=max_tokens,
         )
 
-    if settings.sovereign_base_url is None:
+    if settings.sovereign_base_url is None:  # pragma: no cover - require_lane checked this
         msg = "sovereign lane requested but no base URL is configured"
         raise LaneUnavailableError(msg)
     return _init_openai_compatible(
-        settings.model_for(tier, lane=chosen),
+        model_id,
         api_key=settings.sovereign_api_key.get_secret_value(),
         base_url=settings.sovereign_base_url,
         settings=settings,
