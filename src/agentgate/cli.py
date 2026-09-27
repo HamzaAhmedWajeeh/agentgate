@@ -29,8 +29,9 @@ does not exist.
 
 from __future__ import annotations
 
+import sys
 import uuid
-from typing import Any
+from typing import Any, Final
 
 import typer
 
@@ -186,6 +187,27 @@ def _resume_with(thread_id: str, verdict: dict[str, Any]) -> None:
     _report(state, thread_id, interrupts)
 
 
+# Events that represent a model call, and therefore an endpoint something was sent to. Read
+# from the trail rather than from configuration, because the difference between those two is the
+# whole of leak inventory item 13.
+LANE_BEARING_EVENTS: Final = {"classified": "classified", "drafted": "drafted"}
+
+
+def _lanes_used(state: dict[str, Any]) -> str:
+    """Which lanes model calls actually went to, in the order they happened.
+
+    Empty when the trail carries neither event, which is the correct answer for a run that got
+    nowhere -- rather than a reassuring line about the configured lane.
+    """
+    seen: dict[str, str] = {}
+    for event in state.get("audit_trail", []):
+        decided = str(event.get("decided", ""))
+        lane = event.get("lane")
+        if decided in LANE_BEARING_EVENTS and lane:
+            seen[LANE_BEARING_EVENTS[decided]] = str(lane)
+    return ", ".join(f"{what} on {lane}" for what, lane in seen.items())
+
+
 def _report(state: dict[str, Any], thread_id: str, interrupts: tuple[Any, ...] = ()) -> None:
     """Print whatever the run arrived at: another review, or an ending."""
     if interrupts:
@@ -211,6 +233,8 @@ def _report(state: dict[str, Any], thread_id: str, interrupts: tuple[Any, ...] =
         _echo(f"  decision  {state.get('decision', 'pending')}")
         _echo(f"  revisions {state.get('revisions', 0)}")
         _echo(f"  events    {len(state.get('audit_trail', []))} audit events")
+        if lanes := _lanes_used(state):
+            _echo(f"  lanes     {lanes}")
     else:
         _echo(typer.style("  STOPPED without finalising.", fg=typer.colors.RED))
     _echo(f"  thread    {thread_id}")
@@ -231,7 +255,12 @@ def run(
 
     _echo()
     _echo(f"  thread    {typer.style(thread_id, bold=True)}")
-    _echo(f"  lane      {settings.lane.value}")
+    # Labelled as the default, because it is not necessarily where anything will go. This line
+    # said "lane  cloud" flat, which on a hybrid deployment is what the operator reads while a
+    # restricted request is classified and drafted on their own endpoint -- the interface
+    # repeating leak 13's confusion back at them. Where the calls actually went is printed at
+    # the end, read off the audit trail.
+    _echo(f"  default   {settings.lane.value} lane")
     _echo()
     _warn_if_ephemeral(settings)
 
@@ -288,12 +317,24 @@ def reject(
 
 
 def main() -> None:
-    """Entry point. Configuration errors are reported, not traced."""
+    """Entry point. An agentgate error is reported, not traced.
+
+    That sentence was here for a phase while both happened. The handler printed the message and
+    then raised ``typer.Exit``, which is a click exception and only means anything *inside* the
+    click invocation -- by the time ``app()`` has raised, there is nothing left to honour it. So
+    it escaped as an ordinary exception: the readable message, then eighty-eight lines of
+    traceback after it, and an exit code of 1 rather than the 2 the line claimed.
+
+    Nothing caught it because nothing had ever made the CLI raise. Every command test runs on the
+    fake lane, where no lane is unavailable and no provider can fail. The case that exercises
+    this -- a restricted request on a deployment with one lane -- only became reachable when the
+    policy gate started being enforced.
+    """
     try:
         app()
     except AgentgateError as error:
         typer.echo(typer.style(f"\n  {error}\n", fg=typer.colors.RED), err=True)
-        raise typer.Exit(code=2) from error
+        sys.exit(2)
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through main()

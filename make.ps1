@@ -56,6 +56,8 @@ $targets = [ordered]@{
         Steps = @(, @('uv', 'run', 'python', '-m', 'agentgate.models.catalogue')) }
     'measure'      = @{ Help = 'Measure what one full run consumes, to derive the token ceiling'
         Steps = @(, @('uv', 'run', 'python', 'scripts/measure_run.py')) }
+    'measure-retrieval' = @{ Help = 'Measure index build cost and top-k hit rate per embedder'
+        Steps = @(, @('uv', 'run', 'python', 'scripts/measure_retrieval.py')) }
     'seed'         = @{ Help = 'Index the committed corpus and show what a sample query retrieves'
         Steps = @(, @('uv', 'run', 'python', 'scripts/seed_corpus.py')) }
     'config'       = @{ Help = 'Print the resolved configuration, secrets redacted'

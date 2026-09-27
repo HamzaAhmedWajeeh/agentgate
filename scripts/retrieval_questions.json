@@ -1,0 +1,90 @@
+{
+  "_about": [
+    "Questions with known-correct chunks, for scripts/measure_retrieval.py.",
+    "",
+    "Committed so the measurement is repeatable: a hit rate is only comparable against itself if",
+    "the questions and the expected answers did not move between runs. A chunk is identified by",
+    "(source, heading), which is exactly what corpus.chunk_document writes into metadata -- not by",
+    "text, which would drift the moment a document was reworded.",
+    "",
+    "Written the way someone actually asks, not as keyword echoes of the chunk. That distinction is",
+    "the whole point: HashingEmbeddings is term frequency over a fixed vocabulary, so a question",
+    "that reuses the section's own words is a question it cannot fail. Roughly half of these share",
+    "little or no vocabulary with their answer -- 'money back' for refund, 'tell the regulator' for",
+    "notification, 'looked at' for access, 'write-up' for written review. The `overlap` field says",
+    "which kind each one is, so a hit rate can be read per kind rather than as one average that",
+    "hides the interesting half."
+  ],
+  "questions": [
+    {
+      "question": "How long do we keep authentication logs?",
+      "source": "data-retention.md",
+      "heading": "Retention periods",
+      "overlap": "shared",
+      "note": "'authentication logs' appears verbatim; 'keep' vs 'retained' is the only gap."
+    },
+    {
+      "question": "Who is allowed to declare an incident?",
+      "source": "incident-response.md",
+      "heading": "Declaration",
+      "overlap": "shared",
+      "note": "'declare' and 'incident' both appear in the section."
+    },
+    {
+      "question": "How quickly must we acknowledge a complaint?",
+      "source": "complaints-handling.md",
+      "heading": "Acknowledgement",
+      "overlap": "shared",
+      "note": "'acknowledge' and 'complaint' both appear."
+    },
+    {
+      "question": "Which kind of complaint is growing fastest?",
+      "source": "complaints-handling.md",
+      "heading": "Common complaint categories",
+      "overlap": "shared",
+      "note": "'complaint' and 'fastest growing' both appear."
+    },
+    {
+      "question": "What happens to data sitting in backups when someone asks to be deleted?",
+      "source": "data-retention.md",
+      "heading": "Backups",
+      "overlap": "shared",
+      "note": "'backups' and 'deletion' appear; competes with 'Deletion on request', which is the near miss worth watching."
+    },
+    {
+      "question": "Can a customer still get their money back after six weeks?",
+      "source": "refund-policy.md",
+      "heading": "Eligibility window",
+      "overlap": "synonym",
+      "note": "'money back' for refund, 'six weeks' for thirty days. Nothing in the question appears in the answer except 'customer'."
+    },
+    {
+      "question": "When do we have to tell the regulator about a data breach?",
+      "source": "incident-response.md",
+      "heading": "Regulator notification",
+      "overlap": "synonym",
+      "note": "'breach' appears nowhere in the corpus; the document says 'exposure of personal data'. 'regulator' is the only shared term."
+    },
+    {
+      "question": "If a subscription was only half used, how much comes back?",
+      "source": "refund-policy.md",
+      "heading": "Partial refunds",
+      "overlap": "synonym",
+      "note": "'half used' for partially consumed, 'how much comes back' for prorated refund."
+    },
+    {
+      "question": "What is the deadline for the write-up after something goes wrong?",
+      "source": "incident-response.md",
+      "heading": "Post-incident review",
+      "overlap": "synonym",
+      "note": "'write-up' for written review, 'something goes wrong' for incident. No shared content words at all."
+    },
+    {
+      "question": "Is there a record of who looked at a sensitive file?",
+      "source": "data-retention.md",
+      "heading": "Access logging",
+      "overlap": "synonym",
+      "note": "'looked at' for access, 'sensitive' for restricted, 'file' for record. The hardest one here."
+    }
+  ]
+}

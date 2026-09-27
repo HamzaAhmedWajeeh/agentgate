@@ -36,8 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no node has ever called -- so this system performs no retries at all. Item 15, recorded and
   deliberately not wired here; the constraint for whoever does it is that a fallback must never
   cross to a less contained lane.
-- Leak inventory items 13 to 16 in ADR 0004. The four share a shape worth naming: a component
-  correct in isolation, tested in isolation, and connected to nothing.
+- Leak inventory items 13 to 19 in ADR 0004. They share a shape worth naming: a component correct
+  in isolation, tested in isolation, and connected to nothing. Item 19 is a correction to item 9,
+  which said *closed* and named the class that closed it -- and nothing constructs that class.
+  The row is corrected in place rather than deleted.
+- The stub server speaks SSE, serves `/v1/embeddings` on its own request log, and can decode the
+  token ids an embedding request actually carries. All three exist because something could not
+  otherwise be observed: the CLI streams, so a networked lane had never been driven through the
+  command line at all; and `OpenAIEmbeddings` tokenises client-side, so a canary assertion over an
+  embedding body matches nothing and passes while content leaves.
+- `tiktoken` declared explicitly, for the same reason `openai` is: the suite calls it directly.
+  Without decoding, no absence assertion about the embedding path can ever be non-vacuous.
+- A section in ADR 0004 laying out the options for closing item 17 -- per-lane indexes, indexing
+  both ways, a sovereign embedding endpoint, indexing on the contained lane, not retrieving for
+  restricted requests -- with what each costs the offline suite and startup. Not decided: the
+  measurements that would settle it have not been taken, and it says so.
 - `Makefile` with a `make.ps1` shim exposing the same targets on Windows, so the documented
   commands work on every machine the project is developed on.
 - Multi-stage `Dockerfile` producing a 404 MB image that runs as uid 10001, and a Compose
@@ -187,6 +200,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The CLI printed a readable message and then eighty-eight lines of traceback**, exiting 1 rather
+  than the 2 its handler claimed. `typer.Exit` raised outside the click invocation is an ordinary
+  exception, and `main()`'s docstring said "reported, not traced" while both happened. Nothing
+  caught it because no CLI test could make the CLI raise: every command test runs on the fake lane,
+  where no lane is unavailable and no provider can fail. Reachable now that a single-lane deployment
+  refuses a restricted request.
+- The CLI stated the configured lane as the lane in use -- `lane  cloud` -- which on a hybrid
+  deployment is what an operator reads while a restricted request is classified and drafted on
+  their own endpoint. It is labelled `default` now, and the lanes actually used are reported from
+  the audit trail at the end of a run.
+- `build_embeddings` and `OpenAIEmbeddingsWithUsage` take the endpoint, so the embedding path can
+  be pointed at a double. Until now it was the only egress in the system that **could not be
+  observed at all**. The field is `openai_api_base`, not the `base_url` alias, because mypy knows
+  the field names -- the same trap as leak inventory item 2, one layer up.
 - **The policy gate's routing decision was recorded but never applied.** `route_by_policy` chose
   a lane, the lane node wrote it to state, the audit trail reported it, and no node passed `lane=`
   to the model factory -- so a request routed to the sovereign lane was drafted by whatever the
