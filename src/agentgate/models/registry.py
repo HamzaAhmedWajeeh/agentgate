@@ -27,7 +27,7 @@ from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import Runnable
 
-from agentgate.config import CallClass, Lane, Settings, Tier
+from agentgate.config import CallClass, Lane, Settings, Tier, narrower_of
 from agentgate.errors import AgentgateError
 from agentgate.models.fake import FakeChatModel
 
@@ -224,25 +224,33 @@ def build_model(
             boundary, not a promise that one is more expensive.
         call_class: Determines the output ceiling, so a routing decision cannot spend a
             synthesis-sized budget.
-        lane: Overrides the configured default, for when the policy router has sent an
-            individual request somewhere stricter.
+        lane: What the policy router decided this individual request may reach. It **narrows**
+            the configured default and never widens it, so passing ``CLOUD`` on a sovereign
+            deployment yields a sovereign model rather than a cloud one. See
+            :func:`~agentgate.config.narrower_of` for why that direction is the only safe one.
 
     Raises:
         LaneUnavailableError: if the lane cannot be built from this configuration.
     """
-    chosen = lane or settings.lane
-    model_id = settings.model_for(tier)
+    chosen = narrower_of(lane, settings.lane) if lane is not None else settings.lane
     max_tokens = settings.max_tokens_for(call_class)
 
+    # The identifier is resolved inside each branch, after that lane's endpoint has been
+    # checked, and on the chosen lane rather than the configured one. Both details are load
+    # bearing. Resolving on the configured lane sends a name the receiving server has never
+    # heard of, which was the second half of item 13. Resolving *before* the endpoint check
+    # answers the wrong question first: an operator who routed a restricted request to a
+    # sovereign lane they never configured gets told their model identifier is missing, when
+    # what is missing is the lane.
     if chosen is Lane.FAKE:
-        return FakeChatModel(model_name=model_id)
+        return FakeChatModel(model_name=settings.model_for(tier, lane=chosen))
 
     if chosen is Lane.CLOUD:
         if settings.openai_api_key is None:
             msg = "cloud lane requested but no API key is configured"
             raise LaneUnavailableError(msg)
         return _init_openai_compatible(
-            model_id,
+            settings.model_for(tier, lane=chosen),
             api_key=settings.openai_api_key.get_secret_value(),
             base_url=settings.openai_base_url,
             settings=settings,
@@ -253,7 +261,7 @@ def build_model(
         msg = "sovereign lane requested but no base URL is configured"
         raise LaneUnavailableError(msg)
     return _init_openai_compatible(
-        model_id,
+        settings.model_for(tier, lane=chosen),
         api_key=settings.sovereign_api_key.get_secret_value(),
         base_url=settings.sovereign_base_url,
         settings=settings,

@@ -179,15 +179,28 @@ def test_both_networked_lanes_are_the_same_integration_pointed_elsewhere() -> No
 
 
 def test_a_lane_that_cannot_be_built_says_so() -> None:
-    """Reached when the router sends a request to a lane this deployment has not configured."""
-    settings = build()
+    """A deployment that meant to be hybrid and forgot the endpoint fails loudly.
+
+    The scenario is specific, because it is the only one that can happen. A *fake* deployment
+    asked for the sovereign lane does not raise -- it stays fake, because fake is the more
+    contained of the two. It is the cloud-default deployment with no sovereign endpoint that has
+    nowhere safe to put a restricted request, and refusing is the only correct answer: falling
+    back to the configured lane there would be leak 13 with a shrug attached.
+    """
+    settings = build(
+        lane="cloud",
+        openai_api_key="sk-test",
+        cloud_capable_model="a",
+        cloud_cheap_model="a",
+        model_prices_usd_per_million=priced("a"),
+    )
 
     with pytest.raises(LaneUnavailableError, match="sovereign"):
         build_model(settings, Tier.CHEAP, CallClass.ROUTING, lane=Lane.SOVEREIGN)
 
 
-def test_the_router_can_override_the_configured_lane() -> None:
-    """A restricted request goes to the sovereign lane whatever the default says."""
+def test_the_route_narrows_the_configured_lane() -> None:
+    """A restricted request goes somewhere stricter than the default, whatever the default is."""
     settings = build(
         lane="sovereign",
         sovereign_base_url="http://127.0.0.1:1/v1",
@@ -197,6 +210,37 @@ def test_the_router_can_override_the_configured_lane() -> None:
 
     assert isinstance(
         build_model(settings, Tier.CHEAP, CallClass.ROUTING, lane=Lane.FAKE), FakeChatModel
+    )
+
+
+def test_the_route_cannot_widen_the_configured_lane() -> None:
+    """The direction that was never tested, and the one the obvious fix gets wrong.
+
+    ``route_by_policy`` returns a cloud route for public content, which is right as policy and
+    wrong as an instruction on a deployment whose default is its own endpoint. If this passes by
+    raising rather than by building a sovereign model, read it again: the cloud lane here is
+    fully configured and buildable, so the only reason not to build it is the rule.
+    """
+    settings = build(
+        lane="sovereign",
+        sovereign_base_url="http://127.0.0.1:1/v1",
+        sovereign_model="sovereign-stub",
+        openai_api_key="sk-test",
+        openai_base_url="http://127.0.0.1:2/v1",
+        cloud_capable_model="cloud-stub",
+        cloud_cheap_model="cloud-stub",
+        model_prices_usd_per_million={
+            "sovereign-stub": {"input": 0.0, "output": 0.0},
+            "cloud-stub": {"input": 1.0, "output": 1.0},
+        },
+    )
+
+    model = build_model(settings, Tier.CHEAP, CallClass.ROUTING, lane=Lane.CLOUD)
+
+    assert not isinstance(model, FakeChatModel), "precondition: a networked client was built"
+    assert settings.model_for(Tier.CHEAP, lane=Lane.SOVEREIGN) == "sovereign-stub"
+    assert getattr(model, "model_name", None) == "sovereign-stub", (
+        "a cloud route widened a sovereign deployment's boundary"
     )
 
 

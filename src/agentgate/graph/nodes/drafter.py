@@ -25,9 +25,9 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agentgate.audit.events import Decided, audit_event, digest
-from agentgate.config import CallClass, Settings, Tier
+from agentgate.config import CallClass, Settings, Tier, narrower_of
 from agentgate.graph.completeness import research_gaps
-from agentgate.graph.state import AgentState, findings_of
+from agentgate.graph.state import AgentState, findings_of, lane_of
 from agentgate.guardrails.output import check_provenance
 from agentgate.models.registry import ModelFactory, build_model
 from agentgate.tools.allowlist import AllowlistMiddleware
@@ -79,7 +79,19 @@ def draft(
     """
     correlation_id = state.get("correlation_id", "")
     guard = AllowlistMiddleware(Agent.DRAFTER, correlation_id)
-    model = model_factory(settings, Tier.CAPABLE, CallClass.SYNTHESIS)
+
+    # The routed lane, passed rather than assumed. This one argument is the whole of
+    # leak-inventory item 13: without it the policy gate's decision was recorded in the audit
+    # trail and applied to nothing, so a request the router sent to the sovereign lane was
+    # drafted by whichever provider the deployment happened to default to.
+    #
+    # `narrower_of` is applied again here, rather than trusted to happen inside `build_model`,
+    # because the effective lane is needed for the audit event too -- and an event describing a
+    # lane the model was not built on would be the same defect wearing different clothes.
+    routed = lane_of(state)
+    effective = narrower_of(routed, settings.lane)
+    model_id = settings.model_for(Tier.CAPABLE, lane=effective)
+    model = model_factory(settings, Tier.CAPABLE, CallClass.SYNTHESIS, lane=routed)
 
     agent = create_agent(
         model,
@@ -110,7 +122,7 @@ def draft(
                 decided=Decided.CITATION_FABRICATED,
                 correlation_id=correlation_id,
                 input_digest=digest(text),
-                lane=state.get("lane"),
+                lane=effective.value,
                 detail=provenance.as_detail(),
             )
         ]
@@ -128,9 +140,15 @@ def draft(
                 decided=Decided.DRAFTED,
                 correlation_id=correlation_id,
                 input_digest=digest(state.get("request", "")),
-                model=settings.model_for(Tier.CAPABLE),
-                lane=state.get("lane"),
+                # Both of these described the configured lane before item 13, on an event
+                # whose whole purpose is to say where a deliverable was drafted. The trail
+                # named the sovereign lane and the cloud model in the same line, and neither
+                # was a lie anybody had to tell.
+                model=model_id,
+                lane=effective.value,
                 detail={
+                    "policy_route": routed.value,
+                    "lane_narrowed_by_deployment": effective is not routed,
                     "findings_used": len(state.get("findings", [])),
                     "tools_available": sorted(tool.name for tool in tools_for(Agent.DRAFTER)),
                     "tools_denied": sorted(set(guard.denied)),

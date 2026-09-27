@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from agentgate.audit.events import Decided, audit_event, digest
-from agentgate.config import Lane, Settings, Tier
+from agentgate.config import Lane, Settings, Tier, narrower_of
 from agentgate.graph.state import AgentState, classification_of
 
 
@@ -44,6 +44,11 @@ def bind_lane(node_name: str, lane: Lane, tier: Tier) -> LaneNode:
 
     def bind(state: AgentState, *, settings: Settings) -> AgentState:
         classification = classification_of(state)
+        # What this deployment will actually serve the route from. The route is a policy
+        # decision and is recorded as one; the effective lane is a deployment fact, and the
+        # model identifier has to come from the latter or it names a model the receiving
+        # endpoint has never heard of.
+        effective = narrower_of(lane, settings.lane)
         return {
             # Stored as a plain string: state is serialised into checkpoints, and an enum
             # that round-trips through JSON as a string but is compared as an enum is a
@@ -55,10 +60,15 @@ def bind_lane(node_name: str, lane: Lane, tier: Tier) -> LaneNode:
                     decided=Decided.LANE_SELECTED,
                     correlation_id=state.get("correlation_id", ""),
                     input_digest=digest(state.get("request", "")),
-                    model=settings.model_for(tier),
+                    model=settings.model_for(tier, lane=effective),
                     lane=lane.value,
                     detail={
                         "tier": tier.value,
+                        # The deployment's half of the decision, recorded next to policy's so
+                        # a reader can tell "policy chose sovereign" from "sovereign is where
+                        # this deployment could send it anyway".
+                        "effective_lane": effective.value,
+                        "narrowed_by_deployment": effective is not lane,
                         "because": (
                             classification.sensitivity.value
                             if classification is not None
