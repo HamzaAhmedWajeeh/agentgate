@@ -23,7 +23,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from agentgate.config import CallClass, Settings
+from agentgate.config import CallClass, Lane, Settings
 from agentgate.graph.build import build_graph
 from agentgate.graph.completeness import research_gaps
 from agentgate.graph.state import (
@@ -33,6 +33,7 @@ from agentgate.graph.state import (
     decision_of,
     findings_of,
     initial_state,
+    lane_of,
     outcomes_of,
 )
 from agentgate.models.fake import FakeChatModel, scripted_json
@@ -190,6 +191,22 @@ def test_an_unreadable_decision_never_reads_as_approved() -> None:
     assert decision_of({"decision": "approved-ish"}) is Decision.PENDING  # type: ignore[arg-type]
     assert decision_of({"decision": ""}) is Decision.PENDING  # type: ignore[arg-type]
     assert decision_of({}) is Decision.PENDING  # type: ignore[arg-type]
+
+
+def test_an_unreadable_lane_never_reads_as_the_cloud() -> None:
+    """Fails closed, and the direction is the whole point.
+
+    A lane string this version does not recognise is exactly what an older or newer checkpoint
+    can hand back, and the tempting default -- fall back to the configured lane -- is the cloud
+    on the one deployment where that matters. Resolving to ``SOVEREIGN`` instead means an
+    unreadable routing decision either goes somewhere contained or, on a deployment with no
+    sovereign endpoint, refuses to build a model at all. Both are better than quietly reaching a
+    third party because a field would not parse.
+    """
+    assert lane_of({"lane": "cloud-ish"}) is Lane.SOVEREIGN  # type: ignore[arg-type]
+    assert lane_of({"lane": ""}) is Lane.SOVEREIGN  # type: ignore[arg-type]
+    assert lane_of({}) is Lane.SOVEREIGN  # type: ignore[arg-type]
+    assert lane_of({"lane": "cloud"}) is Lane.CLOUD  # type: ignore[arg-type]
 
 
 # ------------------------------------------------------------------ 3. the warning is fatal

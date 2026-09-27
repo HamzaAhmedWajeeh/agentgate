@@ -208,9 +208,13 @@ def test_the_route_narrows_the_configured_lane() -> None:
         model_prices_usd_per_million=priced("stub"),
     )
 
-    assert isinstance(
-        build_model(settings, Tier.CHEAP, CallClass.ROUTING, lane=Lane.FAKE), FakeChatModel
-    )
+    model = build_model(settings, Tier.CHEAP, CallClass.ROUTING, lane=Lane.FAKE)
+
+    assert isinstance(model, FakeChatModel)
+    # Named for the lane that built it. A fake model carrying a cloud model's identifier would
+    # put that identifier in the audit trail and the spend ledger, for a call that never left
+    # the process -- the same class of untrue record as item 13 itself.
+    assert model.model_name == "fake-cheap"
 
 
 def test_the_route_cannot_widen_the_configured_lane() -> None:

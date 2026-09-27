@@ -234,6 +234,51 @@ def test_a_sovereign_default_never_reaches_the_cloud_endpoint_for_public_content
     )
 
 
+def test_the_audit_trail_names_the_endpoint_that_actually_answered(
+    cloud: StubServer, sovereign: StubServer
+) -> None:
+    """The trail is checked against the request log rather than against itself.
+
+    Every other assertion about the trail in this repository reads the trail alone, which is
+    enough to prove an event was written and nothing at all about whether it is true. This one
+    ties each claim to an observation: the model the drafted event names must be a model the
+    sovereign endpoint was actually asked for, and must not be one the cloud endpoint was.
+
+    Before item 13 this event named the configured lane's model beside the routed lane's label --
+    `lane='sovereign' model='gpt-4.1-nano'` on a request that went to OpenAI. Neither field was
+    a lie anybody had to tell, and no test could tell either.
+    """
+    settings = hybrid_settings(cloud, sovereign, default=Lane.CLOUD.value)
+
+    result = run_to_the_gate(settings, RESTRICTED_REQUEST)
+
+    asked_of_sovereign = models_asked_of(sovereign)
+    asked_of_cloud = models_asked_of(cloud)
+    assert asked_of_sovereign and asked_of_cloud, "precondition: both endpoints were called"
+
+    drafted = next(e for e in result["audit_trail"] if e["decided"] == "drafted")
+    assert drafted["lane"] == Lane.SOVEREIGN.value
+    assert drafted["model"] in asked_of_sovereign, (
+        "the drafted event names a model the endpoint it claims to have used was never asked for"
+    )
+    assert drafted["model"] not in asked_of_cloud
+    assert drafted["detail"]["policy_route"] == Lane.SOVEREIGN.value
+    assert drafted["detail"]["lane_narrowed_by_deployment"] is False
+
+    # The lane-selection event records the same model resolution one node earlier, and had the
+    # same defect: a sovereign binding annotated with the cloud lane's cheap model.
+    lane_event = next(e for e in result["audit_trail"] if e["decided"] == "lane_selected")
+    assert lane_event["model"] == SOVEREIGN_MODEL
+    assert lane_event["detail"]["effective_lane"] == Lane.SOVEREIGN.value
+
+    # The classifier's event is the one that was always true: it really does run on the
+    # configured lane, and says so. Asserted so that a future change which starts routing the
+    # classifier has to come through here.
+    classified = next(e for e in result["audit_trail"] if e["decided"] == "classified")
+    assert classified["lane"] == Lane.CLOUD.value
+    assert classified["model"] in asked_of_cloud
+
+
 # ------------------------------------------------- the gap this test file does not close
 
 
