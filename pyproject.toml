@@ -151,6 +151,12 @@ show_error_codes = true
 pretty = true
 plugins = ["pydantic.mypy"]
 
+[project.scripts]
+# The demo surface. `agentgate run "..."` rather than
+# `uv run python -m agentgate.cli run "..."`, because the command line is meant to be used
+# rather than invoked.
+agentgate = "agentgate.cli:main"
+
 [tool.pytest.ini_options]
 minversion = "9.0"
 testpaths = ["tests"]

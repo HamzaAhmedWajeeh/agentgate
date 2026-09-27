@@ -162,6 +162,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `retrieval/accounting.py` imports it directly because `OpenAIEmbeddings` drops the usage block
   the budget depends on. An undeclared transitive import is a coupling nobody can see.
 
+- A Typer command line -- `run`, `resume`, `approve`, `reject` -- treated as an interface
+  rather than a test harness. The review packet is formatted for a person, progress streams
+  node by node through `stream_mode=["updates", "messages"]`, and the thread id is on screen
+  with the exact commands that use it. Installed as `agentgate`.
+- Resume works across processes, not just across sessions: `run` pauses and exits, `approve`
+  is a separate invocation that picks the run up from the checkpoint. Proven with subprocesses,
+  and guarded by a test that the same flow fails on the in-memory checkpointer.
+- `history` and `fork` are absent rather than stubbed, and `--help` says why: the Phase 6 time
+  travel primitives are not built.
+
 ### Fixed
 
 - `make test-live` could not start. The gatekeeper set two `AGENTGATE_*` variables on the
