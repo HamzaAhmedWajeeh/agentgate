@@ -215,6 +215,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The README described a human gate that approves anything irreversible, and no irreversible
+  action exists.** A run that passes the gate reaches `execute`, which records
+  `irreversible_effects: []`: nothing proposes an effect, no state channel could carry one, and the
+  executor's allowlist is held by no agent. The gate approves a draft being released. ADR 0004
+  item 24, pinned as the current truth by `test_gate_guards_a_draft.py`; the README and concept map
+  now say what the gate guards today. Not fixed here -- the fix is an architecture change.
 - **The retrieval measurement described an embedder that was no longer on `main`.** ADR 0004's table
   and `measure_retrieval.py`'s label still named `OpenAIEmbeddings` after the run ledger made the
   cloud embedder `AccountedEmbeddings` on the raw client -- on the row that justified closing item 17.
