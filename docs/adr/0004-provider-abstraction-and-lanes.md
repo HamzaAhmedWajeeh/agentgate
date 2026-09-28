@@ -330,6 +330,17 @@ that provokes it, not to add a defensive branch.
 | **Closed by** | `docs: correct the claim that embedding spend is accounted` -- the correction, not the wiring. |
 | **Since** | The wiring, 2026-09-28: chat and embedding spend both reach one run ledger now, and the README says which spend the ceilings bound and which they do not. |
 
+### 21. An aliased field cannot be set by its own name, and the keyword is dropped without a word
+
+| | |
+| --- | --- |
+| **Difference** | A field with a validation alias cannot be set in-process by its field name. Under `case_sensitive=False` a constructor keyword is matched against the field's aliases, never the name, and `extra="ignore"` discards one that matches nothing. So `Settings(jev_api_key="x")` constructs cleanly and the key is `None`. `openai_api_key=` works only because its unprefixed alias `OPENAI_API_KEY` happens to spell the field name, and so do both LangSmith fields -- which is why the trap stayed hidden: every existing aliased field was a coincidence. |
+| **How established** | Two of the B2 decider-configuration tests passed against a settings model that did not have the fields yet. The keyword was accepted, dropped, and the assertions -- one about a valid shape, one about a key's absence from `repr` -- held for a model that knew nothing about them. Caught because the other 32 went red and those two did not. |
+| **Evidence** | `tests/unit/test_env_namespace.py::test_an_aliased_field_cannot_be_set_by_its_own_name`, parametrised over every aliased field whose aliases do not spell its name, so a field added later is covered without anyone adding it. Its control, `::test_a_field_whose_alias_spells_its_name_works_only_by_coincidence`, pins the three that do. Mutation-checked: `populate_by_name=True` turns the `jev_api_key` case red. |
+| **Consequence** | The same shape as item 5, which is this failure for the environment -- an unknown variable dropped rather than rejected -- and not for in-process construction, which nothing guarded. **A landmine for every aliased field from here, B4's included:** a test that sets one by name tests nothing. Tests pass the key under its declared name (`test_decider_config.py:KEY` says why). Not fixed with `populate_by_name`: that would make the field name an input too, and a construction path that accepts names the environment does not is a second answer to "what does this field read". |
+| **Recorded** | Here, and in `tests/unit/test_decider_config.py`. |
+| **Closed by** | Nothing. Pinned as the current truth, so any change to it is a visible inversion. |
+
 ### 22. A node's `config` typed as an optional union is silently not injected
 
 | | |
@@ -348,7 +359,7 @@ that provokes it, not to add a defensive branch.
 | **Difference** | `with_structured_output` hands the OpenAI client a pydantic class, and the client parses **inside the model call**. A reply that does not validate raises before the call returns, so a request that reached the provider, and was billed, arrives at the ledger's callback as an error with no usage. The classifier takes the native path on the cloud lane (it is recorded as native) and falls back to repair when it fails, so a misbehaving reply cost a call nothing counted. |
 | **How established** | The run ledger's first wire test counted five requests at the stub and four in the book. The stub answers native requests in prose, as a misbehaving model would; the native attempt was the missing one. |
 | **Evidence** | `tests/integration/test_run_ledger.py::test_a_native_structured_call_that_fails_to_parse_is_still_accounted`, and the request-count test that found it. Mutation-checked: restoring `with_structured_output` turns both red. |
-| **Consequence** | The native path binds the schema as a plain JSON-schema dict and parses the reply itself, strictly -- JSON and nothing else, so a lane that does not really do native is still caught and still falls back. `response_format` is still on the wire, which item 14's control depends on. Fourth instance of item 11's shape: **a client is a convenience over a protocol, and what it declines to hand back is invisible until something depends on it.** |
+| **Consequence** | The native path binds the schema as a plain JSON-schema dict and parses the reply itself, strictly -- JSON and nothing else, so a lane that does not really do native is still caught and still falls back. `response_format` is still on the wire, which item 14's control depends on. **The third time a client convenience has discarded the number the budget depends on** -- after item 11 (`OpenAIEmbeddings` dropping the usage block) and item 18 (streamed calls asking for none). Three bugs in three different layers, one pattern, and the pattern is the finding: **any path between the provider and the ledger that a library owns is a path where usage can go missing without an error.** The ledger's refusal to count a missing number as zero is what turns each one from a silent undercount into a visible failure. (The broader shape item 11 names -- a client is a convenience over a protocol, and what it declines to surface is invisible -- also takes in item 2, a field renamed on the wire rather than a number discarded.) |
 | **Recorded** | Here and in `models/structured.py:invoke_structured`. |
 | **Closed by** | `feat(spend): wire one run ledger through every model call in the graph`. |
 
@@ -379,17 +390,6 @@ that provokes it, not to add a defensive branch.
 | **Consequence** | Not used. Item 24's proposals come from the drafter's final message as JSON, parsed by this code on the same lane-aware path classification uses, and a parse failure fails closed -- no proposals, the drop audited -- rather than being retried at the provider's expense. It also avoids depending on tool calling, which item 12 lists as never measured on any lane. And it is the run ledger earning its place a second time: under it, this loop is a visible refusal at the spend ceiling rather than a silent runaway that only a recursion limit -- a backstop, not a budget -- would end. Same family as items 15 and 22: a toolchain behaviour that is not an error, found by running it. |
 | **Recorded** | Here and in the test. Version-specific: re-check on a `langchain` upgrade. |
 | **Closed by** | Nothing to close in this code; the mechanism is avoided, and the pin makes a change in it visible. |
-### 21. An aliased field cannot be set by its own name, and the keyword is dropped without a word
-
-| | |
-| --- | --- |
-| **Difference** | A field with a validation alias cannot be set in-process by its field name. Under `case_sensitive=False` a constructor keyword is matched against the field's aliases, never the name, and `extra="ignore"` discards one that matches nothing. So `Settings(jev_api_key="x")` constructs cleanly and the key is `None`. `openai_api_key=` works only because its unprefixed alias `OPENAI_API_KEY` happens to spell the field name, and so do both LangSmith fields -- which is why the trap stayed hidden: every existing aliased field was a coincidence. |
-| **How established** | Two of the B2 decider-configuration tests passed against a settings model that did not have the fields yet. The keyword was accepted, dropped, and the assertions -- one about a valid shape, one about a key's absence from `repr` -- held for a model that knew nothing about them. Caught because the other 32 went red and those two did not. |
-| **Evidence** | `tests/unit/test_env_namespace.py::test_an_aliased_field_cannot_be_set_by_its_own_name`, parametrised over every aliased field whose aliases do not spell its name, so a field added later is covered without anyone adding it. Its control, `::test_a_field_whose_alias_spells_its_name_works_only_by_coincidence`, pins the three that do. Mutation-checked: `populate_by_name=True` turns the `jev_api_key` case red. |
-| **Consequence** | The same shape as item 5, which is this failure for the environment -- an unknown variable dropped rather than rejected -- and not for in-process construction, which nothing guarded. **A landmine for every aliased field from here, B4's included:** a test that sets one by name tests nothing. Tests pass the key under its declared name (`test_decider_config.py:KEY` says why). Not fixed with `populate_by_name`: that would make the field name an input too, and a construction path that accepts names the environment does not is a second answer to "what does this field read". |
-| **Recorded** | Here, and in `tests/unit/test_decider_config.py`. |
-| **Closed by** | Nothing. Pinned as the current truth, so any change to it is a visible inversion. |
-
 ## Closing item 17: the index is the hard part
 
 **Decided 2026-09-28: index on the contained lane.** Item 17 above records the decision, what it
