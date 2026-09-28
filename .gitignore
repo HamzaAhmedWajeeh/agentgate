@@ -42,6 +42,9 @@ wheels/
 venv/
 ENV/
 env/
+# Except the top-level deployment examples (env/sovereign.env, env/hybrid.env), which are
+# configuration, not a virtualenv. .env itself stays ignored above.
+!/env/
 
 # Tooling caches
 .pytest_cache/
