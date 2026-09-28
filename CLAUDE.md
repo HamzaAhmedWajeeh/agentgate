@@ -38,7 +38,8 @@ Non-negotiable, and the reason each exists is in the inventory somewhere.
 **A component correct in isolation, tested in isolation, and connected to nothing.** Items 13, 15,
 16, 17 and 19 are all that shape. The policy router chose lanes correctly for four phases while
 nothing applied the choice. `build_resilient_model` retries correctly today and no node calls it.
-Item 19 is a row that said *closed*, named the class that closed it, and that class is on no path.
+Item 19 was a row that said *closed*, named the class that closed it, and that class was on no
+path until the run ledger wired it.
 
 A unit test cannot find this. An integration test only finds it if it asserts on something outside
 the process. **When something looks done, check what calls it.**
@@ -56,8 +57,8 @@ asserts its absence; ADR 0004 item 17 has the full record.
 
 - **Open for cloud-only deployments.** Their most contained lane *is* the cloud, so the corpus and
   public sub-questions are still embedded there, pinned as documented egress — the same shape as
-  item 14. Item 19 is sidestepped on hybrid deployments only; on cloud-only, that embedding spend
-  is still accounted by nothing.
+  item 14. That embedding spend is accounted: every call is billed to the run's ledger (item 19,
+  closed).
 - **The cost is retrieval quality on every request.** Measured via `make measure-retrieval`: **90%
   top-4 against a 20% chance floor**. That figure belongs to this **20-chunk corpus at 301 distinct
   terms**. ADR 0010's collision curve degrades a hashing index as vocabulary grows, so a corpus an
@@ -69,6 +70,13 @@ asserts its absence; ADR 0004 item 17 has the full record.
 **`most_contained_lane` is the single rule for "which lane is most contained".** Classification
 and retrieval both read it, and Part B will be its third caller. Do not write a second answer to
 that question — two homes for one policy eventually give two answers.
+
+## Every run has a ledger
+
+**Every run starts through `graph/build.py:run_config`** (or `resume_config`), which carries the
+run's spend ledger. Model-calling nodes refuse to run without it, and any new model call -- the
+decider's included -- is charged to it. A node reading its config takes a required
+`config: RunnableConfig`: the optional-union spelling is silently not injected (item 22).
 
 ## Part B: the next step is B1
 

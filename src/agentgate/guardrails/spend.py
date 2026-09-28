@@ -21,7 +21,10 @@ than on anything being wrong.
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from langchain_core.messages import AIMessage
 
@@ -147,6 +150,43 @@ class SpendLedger:
     usage_by_model: dict[str, Usage] = field(default_factory=dict)
     calls: int = 0
 
+    # Research branches run in parallel threads and record into one run ledger. The per-model
+    # total is read-add-write, so without this a concurrent update is lost and the ceiling reads
+    # low -- in the direction that lets a run spend past it.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    @classmethod
+    def resumed(
+        cls,
+        settings: Settings,
+        ceilings: Ceilings,
+        spent: Mapping[str, Mapping[str, Any]] | None,
+        *,
+        session: SpendLedger | None = None,
+    ) -> SpendLedger:
+        """A ledger that starts from a run's spend so far, as :meth:`as_channel` recorded it.
+
+        A run pauses at the approval gate and is resumed by another process, so the ledger object
+        cannot span it -- but its totals must, or every resume would reset the ceiling and a
+        reviewer who kept rejecting would never reach it. ``calls`` restarts, because it counts
+        this invocation's calls; spend and tokens do not.
+        """
+        ledger = cls(settings, ceilings, session)
+        for model, counts in (spent or {}).items():
+            ledger.usage_by_model[model] = Usage(
+                input_tokens=int(counts.get("input_tokens", 0)),
+                output_tokens=int(counts.get("output_tokens", 0)),
+            )
+        return ledger
+
+    def as_channel(self) -> dict[str, dict[str, int]]:
+        """The spend so far as plain JSON, for a state channel (ADR 0011)."""
+        with self._lock:
+            return {
+                model: {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
+                for model, usage in sorted(self.usage_by_model.items())
+            }
+
     def record(self, model: str, reply: AIMessage) -> Usage:
         """Account for one model call, and roll it up into the session if there is one."""
         return self.record_usage(model, usage_of(reply))
@@ -159,15 +199,22 @@ class SpendLedger:
         fabricating a message to carry it. Recorded against the model rather than against a
         category, so the summary says `text-embedding-3-small` and not `embeddings`.
         """
-        self.usage_by_model[model] = self.usage_by_model.get(model, Usage()) + usage
-        self.calls += 1
+        with self._lock:
+            self.usage_by_model[model] = self.usage_by_model.get(model, Usage()) + usage
+            self.calls += 1
         if self.session is not None:
             self.session.record_usage(model, usage)
         return usage
 
+    def _snapshot(self) -> list[tuple[str, Usage]]:
+        """The per-model totals, copied under the lock so a sibling thread's first call to a new
+        model cannot resize the dict mid-iteration."""
+        with self._lock:
+            return list(self.usage_by_model.items())
+
     @property
     def total_tokens(self) -> int:
-        return sum(usage.total_tokens for usage in self.usage_by_model.values())
+        return sum(usage.total_tokens for _, usage in self._snapshot())
 
     @property
     def total_usd(self) -> float:
@@ -179,7 +226,7 @@ class SpendLedger:
         """
         return sum(
             self.settings.price_for(model).cost_usd(usage.input_tokens, usage.output_tokens)
-            for model, usage in self.usage_by_model.items()
+            for model, usage in self._snapshot()
         )
 
     def check(self) -> None:

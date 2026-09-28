@@ -29,7 +29,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from agentgate.config import CallClass, Settings
-from agentgate.graph.build import build_checkpointer, build_graph
+from agentgate.graph.build import build_checkpointer, build_graph, run_config
 from agentgate.graph.nodes.approval import review_packet
 from agentgate.graph.nodes.execute import UnapprovedExecutionError, execute
 from agentgate.graph.state import Decision, decision_of, initial_state
@@ -68,10 +68,7 @@ class Run:
         self.graph = build_graph(
             settings, build_checkpointer(settings), model_factory=model_factory
         )
-        self.config = {
-            "configurable": {"thread_id": str(uuid.uuid4())},
-            "recursion_limit": settings.recursion_limit,
-        }
+        self.config = run_config(settings, str(uuid.uuid4()))
 
     def start(self, questions: list[str] | None = None) -> dict[str, Any]:
         state = initial_state("Draft a refund response.", str(uuid.uuid4()))

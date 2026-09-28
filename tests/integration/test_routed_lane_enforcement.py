@@ -39,11 +39,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.doubles.openai_compatible import StubBehaviour, StubServer, running_stub
+from tests.doubles.openai_compatible import (
+    StubBehaviour,
+    StubServer,
+    estimate_tokens,
+    running_stub,
+)
 
 from agentgate.config import Lane, Settings, Tier
-from agentgate.graph.build import build_checkpointer, build_graph
+from agentgate.graph.build import build_checkpointer, build_graph, run_config
 from agentgate.graph.state import Finding, findings_of, initial_state
+from agentgate.guardrails.run_ledger import charging
+from agentgate.guardrails.spend import Ceilings, SpendLedger
 from agentgate.models.registry import LaneUnavailableError
 from agentgate.retrieval.embeddings import build_embeddings
 
@@ -153,10 +160,7 @@ def run_to_the_gate(settings: Settings, request: str) -> dict[str, Any]:
     return dict(
         graph.invoke(
             state,
-            {
-                "configurable": {"thread_id": str(uuid.uuid4())},
-                "recursion_limit": settings.recursion_limit,
-            },
+            run_config(settings, str(uuid.uuid4())),
         )
     )
 
@@ -507,10 +511,7 @@ def run_with_research(settings: Settings, request: str, question: str) -> dict[s
     return dict(
         graph.invoke(
             state,
-            {
-                "configurable": {"thread_id": str(uuid.uuid4())},
-                "recursion_limit": settings.recursion_limit,
-            },
+            run_config(settings, str(uuid.uuid4())),
         )
     )
 
@@ -758,7 +759,10 @@ def test_the_canary_helper_reads_the_embedding_log(cloud: StubServer) -> None:
     the only way the helper can see the marker is through the embedding log.
     """
     marker = "canary-7731-embedding-only"
-    build_embeddings(cloud_only_with_embeddings(cloud)).embed_query(f"refund window {marker}")
+    settings = cloud_only_with_embeddings(cloud)
+    # Charged like any embedding: an uncharged call is refused rather than made for free.
+    with charging(SpendLedger(settings, Ceilings.for_run(settings))):
+        build_embeddings(settings).embed_query(f"refund window {marker}")
 
     assert cloud.behaviour.requests_seen == [], "precondition: no chat call was made"
     assert cloud.behaviour.embedding_requests, "precondition: the embedding reached the stub"
@@ -768,28 +772,23 @@ def test_the_canary_helper_reads_the_embedding_log(cloud: StubServer) -> None:
     )
 
 
-def test_no_embedding_call_is_accounted_for_anywhere(cloud: StubServer) -> None:
-    """Leak inventory item 19, and the reason item 9 is reopened.
+def test_every_embedding_call_is_accounted_in_the_run_ledger(cloud: StubServer) -> None:
+    """Leak inventory item 19, closed, and this is the test that used to assert it was open.
 
-    Item 9 is recorded as **closed**, by `AccountedEmbeddings`. Nothing constructs it.
-    `build_embeddings` returns a plain `OpenAIEmbeddings`, which -- as `accounting.py`'s own
-    docstring says -- discards the usage block the budget depends on. So embedding spend is still
-    invisible to every ceiling, which is precisely the state item 9 describes as fixed.
+    Item 9 was recorded as closed by `AccountedEmbeddings` while nothing constructed it, so
+    embedding spend reached no ceiling. It is now what `build_embeddings` returns on the cloud,
+    billed to the run that is embedding. Read off the wire: the tokens in the run's spend record
+    for the embedding model are exactly what the stub reported for the texts it was sent.
 
-    Cloud-only since item 17 closed, because that is the only deployment left with cloud embedding
-    spend to account. Hybrid and fake deployments embed in process and spend nothing.
+    Cloud-only, because that is the only deployment left with cloud embedding spend to account.
+    Hybrid and fake deployments embed in process and spend nothing.
     """
     cloud.behaviour.reply = verdict("public", pii=False)
     settings = cloud_only_with_embeddings(cloud)
 
-    run_with_research(settings, PUBLIC_REQUEST, PUBLIC_RETRIEVAL_QUESTION)
+    result = run_with_research(settings, PUBLIC_REQUEST, PUBLIC_RETRIEVAL_QUESTION)
 
-    assert cloud.behaviour.embedding_requests, "precondition: embeddings happened"
-
-    # The path a wired ledger would have to run through. `AccountedEmbeddings` is what item 9
-    # names as its closer, and `build_embeddings` is what the index actually calls.
-    embedder = build_embeddings(settings)
-    assert type(embedder).__name__ == "OpenAIEmbeddings", (
-        f"the index now embeds through {type(embedder).__name__}; if that is AccountedEmbeddings "
-        "then item 9 is genuinely closed and this test and items 9 and 19 are what to rewrite"
-    )
+    texts = cloud.behaviour.embedding_texts()
+    assert texts, "precondition: embeddings happened"
+    reported = sum(estimate_tokens(text) for text in texts)
+    assert result["spend"][EMBEDDING_MODEL] == {"input_tokens": reported, "output_tokens": 0}

@@ -97,11 +97,13 @@ Things this build surfaced that were not on the original list, kept because each
 | Suite fails on an unmeasured networked-lane entry | **done** | `tests/unit/test_registry.py::test_no_networked_lane_entry_rests_on_assumption` |
 | Deterministic fake lane with honest usage metadata | **done** | `models/fake.py` |
 | Committed OpenAI-compatible stub server | **done** | `tests/doubles/openai_compatible.py` |
-| Spend ledger with run and session ceilings | **done** (not yet wired into the graph) | `guardrails/spend.py`; used by the live suite only |
-| Streamed calls report their token usage | not built | `langchain-openai` sets no `stream_options`, and the CLI is the only surface that streams. Leak inventory item 18 |
+| Run ledger reaching every model call in the graph, ceiling checked after each | **done** | `graph/build.py:run_config`; `guardrails/run_ledger.py:ledger_of`, `guardrails/run_ledger.py:accounted`; `tests/integration/test_run_ledger.py` |
+| Run spend survives a pause and resume in another process | **done** | `graph/build.py:resume_config`; `graph/state.py:AgentState.spend`, written by `graph/nodes/supervisor.py:supervise` |
+| Session ceiling across runs in one process | not built | `guardrails/spend.py` has the parent-ledger mechanism; the CLI runs one run per process, and the multi-run surface it bounds is Phase 7's API |
+| Streamed calls report their token usage | **done** | `models/registry.py:_init_openai_compatible` sets `stream_usage`. Leak inventory item 18, closed |
 | Unmeasured usage is an error, never a free call | **done** | `guardrails/spend.py:usage_of` |
-| Embedding spend accounted in the same ledger | **built, not wired** | `retrieval/accounting.py:AccountedEmbeddings` |
-| ↳ why that row changed | **done** (pinned) | `tests/integration/test_routed_lane_enforcement.py`; on a cloud-only deployment the index builds a plain `OpenAIEmbeddings`, so ADR 0004 item 9 is reopened as item 19 |
+| Embedding spend accounted in the same ledger | **done** | `retrieval/embeddings.py:build_embeddings` constructs `retrieval/accounting.py:AccountedEmbeddings`, billed via `guardrails/run_ledger.py:charging`. Leak inventory items 9 and 19, closed |
+| ↳ why that row changed twice | **done** (pinned) | `tests/integration/test_routed_lane_enforcement.py::test_every_embedding_call_is_accounted_in_the_run_ledger`; it said *done* while nothing constructed the class (item 19), then *built, not wired*, and is now wired |
 | Output check: citation provenance | **done** | `guardrails/output.py:check_provenance`; `tests/unit/test_output_guardrail.py` |
 | Durable append-only audit trail | **done** | `audit/writer.py:write_events`; `graph/nodes/finalise.py` |
 | Trail readable with no imports from agentgate | **done** | `tests/integration/test_audit_trail.py::test_the_trail_reads_with_the_standard_library_alone` |

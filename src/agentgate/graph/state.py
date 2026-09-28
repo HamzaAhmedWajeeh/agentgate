@@ -268,6 +268,17 @@ class AgentState(TypedDict, total=False):
     finalised: bool
     """Set when the budget guard or the supervisor decides the run is over."""
 
+    spend: dict[str, dict[str, int]]
+    """What the run has spent so far, per model: ``{model: {"input_tokens", "output_tokens"}}``.
+
+    Single-writer, by the supervisor, which every model-calling node returns to and which runs
+    before every pause. The ledger itself lives in the run's config and is never checkpointed, so
+    this is how its totals outlive a process: a run pauses at the approval gate, a different
+    process resumes it, and ``resume_config`` starts the new ledger from here. Without it every
+    resume would reset the ceiling. Absolute totals rather than deltas, so rewriting it is
+    idempotent. Spend from calls made after the last supervisor turn of a process that then
+    *crashed* is not in it -- the one case where the persisted figure reads low."""
+
 
 def classification_of(state: AgentState) -> Classification | None:
     """The classifier's verdict, parsed, or ``None`` if there isn't a usable one."""

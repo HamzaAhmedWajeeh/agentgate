@@ -49,6 +49,8 @@ if str(REPO) not in sys.path:  # pragma: no cover - script bootstrap
     sys.path.insert(0, str(REPO))
 
 from agentgate.config import Lane, Settings  # noqa: E402
+from agentgate.guardrails.run_ledger import charging  # noqa: E402
+from agentgate.guardrails.spend import Ceilings, SpendLedger  # noqa: E402
 from agentgate.retrieval.corpus import load_corpus  # noqa: E402
 from agentgate.retrieval.embeddings import HashingEmbeddings, build_embeddings  # noqa: E402
 from agentgate.retrieval.index import DenseIndex  # noqa: E402
@@ -204,10 +206,13 @@ def main(argv: list[str] | None = None) -> int:
     with running_stub_server() as stub:  # type: ignore[attr-defined]
         settings = stub_settings(stub.base_url)
         provider = build_embeddings(settings)
-        provider_cost = time_build(
-            "OpenAIEmbeddings -> stub (real HTTP)", provider, chunks, stub.behaviour
-        )
-        provider_quality = measure_quality("stub (chance baseline)", provider, chunks)
+        # The cloud embedder bills whichever ledger is charged; against a loopback stub that is
+        # a ledger nobody reads, but an uncharged call is refused rather than made for free.
+        with charging(SpendLedger(settings, Ceilings.for_run(settings))):
+            provider_cost = time_build(
+                "OpenAIEmbeddings -> stub (real HTTP)", provider, chunks, stub.behaviour
+            )
+            provider_quality = measure_quality("stub (chance baseline)", provider, chunks)
 
     # ------------------------------------------------------------------ build cost
     print("  BUILD COST\n")

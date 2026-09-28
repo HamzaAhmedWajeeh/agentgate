@@ -25,9 +25,12 @@ accident.
 
 from __future__ import annotations
 
+from langchain_core.runnables import RunnableConfig
+
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import CallClass, Settings, Tier
 from agentgate.graph.state import AgentState, Classification, Complexity, Sensitivity
+from agentgate.guardrails.run_ledger import accounted, ledger_of
 from agentgate.models.registry import Capability, ModelFactory, build_model, supports
 from agentgate.models.structured import StructuredOutputError, invoke_structured
 
@@ -54,7 +57,10 @@ reason: one short sentence.
 
 
 def classify(
-    state: AgentState, settings: Settings, model_factory: ModelFactory = build_model
+    state: AgentState,
+    settings: Settings,
+    config: RunnableConfig,
+    model_factory: ModelFactory = build_model,
 ) -> AgentState:
     """Classify the request and record the decision.
 
@@ -74,7 +80,12 @@ def classify(
     lane = settings.most_contained_lane
     model_id = settings.model_for(Tier.CHEAP, lane=lane)
 
-    model = model_factory(settings, Tier.CHEAP, CallClass.CLASSIFICATION, lane=lane)
+    # Charged to the run before it is built, so a run with no ledger fails here -- before any
+    # request leaves -- rather than making a call nobody accounts for.
+    ledger = ledger_of(config)
+    model = accounted(
+        model_factory(settings, Tier.CHEAP, CallClass.CLASSIFICATION, lane=lane), ledger
+    )
     # Asked of the lane the call is actually made on. Looking this up on the configured lane
     # would take the native path against an endpoint recorded as not having it, which is not a
     # silent failure -- it is a measured 2 calls and 733 prompt tokens where 1 and 537 would do,

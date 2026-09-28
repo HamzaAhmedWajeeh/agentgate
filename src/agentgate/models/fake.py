@@ -155,7 +155,10 @@ class FakeChatModel(BaseChatModel):
         double honest about the one thing it is for: a test that wants the model to demand an
         irreversible tool says so explicitly, rather than hoping a real model would.
         """
-        self.bound_tools = [
+        # Updated in place rather than reassigned. Nodes charge a model to the run ledger by
+        # attaching a callback to a shallow copy of it, and a copy shares this list but not the
+        # attribute -- so reassigning would record the binding somewhere no test can see it.
+        self.bound_tools[:] = [
             str(getattr(item, "name", None) or getattr(item, "__name__", None) or item)
             for item in tools
         ]

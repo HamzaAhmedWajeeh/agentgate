@@ -21,6 +21,8 @@ from typing import Final
 
 from agentgate.config import Lane, get_settings
 from agentgate.errors import AgentgateError, ConfigurationError
+from agentgate.guardrails.run_ledger import charging
+from agentgate.guardrails.spend import Ceilings, SpendLedger
 from agentgate.retrieval.corpus import load_corpus
 from agentgate.retrieval.index import build_retriever
 
@@ -66,23 +68,36 @@ def main(argv: list[str] | None = None) -> int:
         print("  --check: nothing indexed.\n")
         return EXIT_OK
 
-    if settings.lane is Lane.CLOUD:
+    # Asked of the lane embeddings actually use -- the most contained one -- not the default. A
+    # hybrid deployment defaults to the cloud and embeds in process for nothing (item 17).
+    embedding_lane = settings.most_contained_lane
+    if embedding_lane is Lane.CLOUD:
         print(f"  Embedding {len(chunks)} chunks via {settings.embedding_model}. This is billed.\n")
     else:
-        print(f"  Embedding in-process on the '{settings.lane.value}' lane. No network, no cost.\n")
+        print(
+            f"  Embedding in-process on the '{embedding_lane.value}' lane. No network, no cost.\n"
+        )
 
-    try:
-        retriever = build_retriever(settings, chunks)
-    except AgentgateError as error:
-        print(str(error), file=sys.stderr)
-        return EXIT_BAD_CONFIG
+    # Billed to a ledger of its own and checked against the run ceiling, like any embedding. The
+    # charge covers the index build as well as the queries: building the retriever is what embeds
+    # the whole corpus.
+    ledger = SpendLedger(settings, Ceilings.for_run(settings))
+    with charging(ledger):
+        try:
+            retriever = build_retriever(settings, chunks)
+        except AgentgateError as error:
+            print(str(error), file=sys.stderr)
+            return EXIT_BAD_CONFIG
 
-    print(f"  Sample retrievals at k={settings.retrieval_top_k}:\n")
-    for query in SAMPLE_QUERIES:
-        print(f"    ? {query}")
-        for document in retriever.invoke(query):
-            print(f"        {document.metadata['source']} :: {document.metadata['heading']}")
-        print()
+        print(f"  Sample retrievals at k={settings.retrieval_top_k}:\n")
+        for query in SAMPLE_QUERIES:
+            print(f"    ? {query}")
+            for document in retriever.invoke(query):
+                print(f"        {document.metadata['source']} :: {document.metadata['heading']}")
+            print()
+
+    if ledger.calls:
+        print(f"  Spent {ledger.total_tokens} tokens, ${ledger.total_usd:.6f}.\n")
 
     print(
         "  Read the samples rather than the counts. Chunking that looks fine by the numbers and\n"

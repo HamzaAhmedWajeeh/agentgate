@@ -37,6 +37,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from agentgate.config import CallClass, Settings
+from agentgate.graph.build import run_config
 from agentgate.graph.nodes.drafter import INSTRUCTION, draft
 from agentgate.graph.state import AgentState, Finding
 from agentgate.models.fake import FakeChatModel
@@ -130,7 +131,12 @@ def test_only_allowlisted_tools_are_bound_to_the_drafters_model() -> None:
     settings = settings_with()
     model = FakeChatModel(responses=["A draft."])
 
-    draft(state_with_findings(), settings, model_factory=lambda *_a, **_k: model)
+    draft(
+        state_with_findings(),
+        settings,
+        run_config(settings, "allowlist"),
+        model_factory=lambda *_a, **_k: model,
+    )
 
     assert model.bound_tools == sorted(ALLOWLISTS[Agent.DRAFTER])
     assert not set(model.bound_tools) & IRREVERSIBLE
@@ -159,7 +165,12 @@ def test_a_demanded_irreversible_tool_does_not_execute() -> None:
         ]
     )
 
-    result = draft(state_with_findings(), settings, model_factory=lambda *_a, **_k: model)
+    result = draft(
+        state_with_findings(),
+        settings,
+        run_config(settings, "allowlist"),
+        model_factory=lambda *_a, **_k: model,
+    )
 
     denials = [e for e in result["audit_trail"] if e["decided"] == "tool_denied"]
     assert len(denials) == 1
@@ -269,7 +280,12 @@ def test_the_drafter_records_which_tools_it_was_denied() -> None:
         ]
     )
 
-    result = draft(state_with_findings(), settings, model_factory=lambda *_a, **_k: model)
+    result = draft(
+        state_with_findings(),
+        settings,
+        run_config(settings, "allowlist"),
+        model_factory=lambda *_a, **_k: model,
+    )
 
     drafted = next(e for e in result["audit_trail"] if e["decided"] == "drafted")
     assert drafted["detail"]["tools_denied"] == ["send_customer_email"]
@@ -284,7 +300,9 @@ def test_the_drafter_is_told_when_it_is_drafting_from_partial_research() -> None
     state = state_with_findings()
     state["dispatched"] = 3  # three went out, no outcomes came back
 
-    result = draft(state, settings, model_factory=lambda *_a, **_k: model)
+    result = draft(
+        state, settings, run_config(settings, "allowlist"), model_factory=lambda *_a, **_k: model
+    )
 
     brief = str(model.calls[0][-1].content)
     assert "did not report" in brief
@@ -301,6 +319,11 @@ def test_the_drafter_runs_on_the_synthesis_call_class() -> None:
         seen.append(call_class)
         return FakeChatModel(responses=["A draft."])
 
-    draft(state_with_findings(), settings_with(), model_factory=factory)
+    draft(
+        state_with_findings(),
+        settings_with(),
+        run_config(settings_with(), "allowlist"),
+        model_factory=factory,
+    )
 
     assert seen == [CallClass.SYNTHESIS]

@@ -24,20 +24,32 @@ does not gate.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TypedDict
+from typing import Any, Final, TypedDict
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Settings
 from agentgate.graph.state import Finding, ResearchOutcome
+from agentgate.guardrails.run_ledger import LedgerMissingError, charging, ledger_of
+from agentgate.guardrails.spend import MissingUsageError, SpendCeilingExceededError
+from agentgate.retrieval.accounting import MissingEmbeddingUsageError
 from agentgate.retrieval.index import build_retriever
 
 NODE = "research_branch"
 PARENT_RETURN = "supervisor"
 
 RetrieverFactory = Callable[[Settings], Any]
+
+BUDGET_ERRORS: Final = (
+    SpendCeilingExceededError,
+    MissingUsageError,
+    MissingEmbeddingUsageError,
+    LedgerMissingError,
+)
+"""What a research branch must not swallow. See ``search``."""
 
 
 class RetrievalState(TypedDict, total=False):
@@ -95,17 +107,26 @@ def build_retrieval_subgraph(
     """
     retriever = _memoised(settings, retriever_factory)
 
-    def search(state: RetrievalState) -> RetrievalState:
-        """Look the sub-question up in the corpus.
+    def search(state: RetrievalState, config: RunnableConfig) -> RetrievalState:
+        """Look the sub-question up in the corpus, billing any embedding to the run.
 
         Failure is caught and recorded rather than raised. An exception here would abort the
         whole super-step, discarding the findings of every sibling branch that had already
         succeeded -- turning one branch's bad day into a total loss.
+
+        **Except a budget.** A crossed ceiling, an unmeasured call, or a run with no ledger is
+        not a bad day for this branch: it is the run's budget saying stop. Caught here, it would
+        become a failed outcome the drafter then writes up, and the run would carry on spending.
+        So those pass through, and stop the run the way they stop it everywhere else.
         """
         question = state.get("question", "")
+        ledger = ledger_of(config)
         try:
-            documents = retriever().invoke(question)
-        except Exception as error:  # any retrieval failure means the same thing to the branch
+            with charging(ledger):
+                documents = retriever().invoke(question)
+        except BUDGET_ERRORS:
+            raise
+        except Exception as error:  # any other retrieval failure means the same thing here
             return {"error": f"{type(error).__name__}: {str(error)[:200]}"}
 
         return {
