@@ -352,6 +352,18 @@ that provokes it, not to add a defensive branch.
 | **Recorded** | Here and in `models/structured.py:invoke_structured`. |
 | **Closed by** | `feat(spend): wire one run ledger through every model call in the graph`. |
 
+### 24. The human gate approves a draft, and no action exists for it to approve
+
+| | |
+| --- | --- |
+| **Difference** | The thesis is that a human gate approves anything irreversible. A run that passes the gate reaches `execute`, which records `irreversible_effects: []` -- because **no irreversible effect has ever existed.** Nothing proposes one: the executor's allowlist (`issue_refund`, `send_customer_email`) is declared in `tools/registry.py` and held by no agent, there is no state channel a proposal could travel in, and `execute` reads nothing that could name one. What the gate actually approves is a draft being released. The README and the concept map described a gate that pauses before anything irreversible. |
+| **How established** | While designing the decider's assess node, which was to send Jev structured facts including the proposed actions. There are none: the list would be empty on every run, and the decider's verdict would have depended on nothing that varies. Then shown on a real run: a fake-lane request that asks for a refund in so many words, approved at the gate, reaches `execute` once and records no effect. |
+| **Evidence** | `tests/integration/test_gate_guards_a_draft.py`, asserting the current truth so that closing this inverts named tests. `::test_an_approved_run_reaches_execute_and_nothing_irreversible_happens` is the run, with its presence half -- the run did pass the gate and reach `execute`. `::test_there_is_no_state_channel_a_proposal_could_travel_in` reads the schema, `::test_execute_ignores_a_proposal_even_when_one_is_handed_to_it` hands `execute` a fabricated approved proposal and watches it do nothing, and `::test_the_executor_allowlist_is_declared_and_held_by_no_agent` checks that nothing in `src/` takes the executor's tools. Mutation-checked: adding a proposals channel, having `execute` record one, or referencing the executor's allowlist from a node each turns its test red. |
+| **Consequence** | Same shape as items 15 and 19 -- **correct in isolation, tested in isolation, connected to nothing** -- and the most load-bearing instance yet, because it is the headline claim. Every piece of the gate is real and pinned: `interrupt()` pauses, resume re-executes from the top, nothing has a side effect before the pause, `execute` is reachable only past an approval and refuses otherwise. What it guards is a release, not an effect. The tool allowlists already half-implement the privilege separation the thesis needs -- the drafter provably cannot call an irreversible tool -- and the other half, something that proposes an action for the gate to approve, was never built. |
+| **Corrected** | The README now says the gate guards a draft today and names this row; the concept map carries *irreversible action executed only past the gate* and *proposals carried to the gate* as **not built**. The thesis blockquote is left verbatim as the design statement it is, with the scope stated directly beneath it. |
+| **Recorded** | Here, in the README, in the concept map, and in `graph/nodes/execute.py`'s own comment, which has said so since Phase 5. |
+| **Closed by** | Nothing yet. The fix is structured proposals from the drafter, executed only past the gate by an executor holding the `EXECUTOR` allowlist -- an architecture change, proposed before it is built. |
+
 ## Closing item 17: the index is the hard part
 
 **Decided 2026-09-28: index on the contained lane.** Item 17 above records the decision, what it

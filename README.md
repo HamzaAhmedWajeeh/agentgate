@@ -8,9 +8,14 @@
 > Budget gates cap iterations, tokens, and spend. A human gate approves anything irreversible.
 > All three write to an append-only audit trail.
 
+**Today the human gate approves a draft, not an action.** Nothing in the system proposes an
+irreversible effect yet, so a run that passes the gate releases a draft and performs nothing
+irreversible -- ADR 0004 item 24, pinned by a test that asserts exactly that. The thesis above is
+the design; the status below says how much of it is built.
+
 An agent runtime for environments where an autonomous action has consequences: the model tier a
 request reaches is a policy decision, the number of steps it may take is a budget decision, and
-anything irreversible is a human decision. `agentgate` makes all three explicit, enforces them in
+releasing the result is a human decision. `agentgate` makes all three explicit, enforces them in
 the graph rather than in a prompt, and records every one of them.
 
 Built on LangGraph and LangChain. The demo domain is a compliance-aware research and drafting
@@ -45,9 +50,10 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
 - The graph: classification, a policy gate that routes restricted content to the sovereign lane
   -- see below for exactly what that is claimed to cover, which is not a footnote --
   research fanned out over a compiled retrieval subgraph, a drafting worker, and a human
-  approval gate that pauses before anything irreversible. Rejection returns the draft for
-  revision, and a reviewer who never approves is stopped by the iteration budget rather than by
-  giving up.
+  approval gate that pauses before the draft is released. It guards a draft today: no
+  irreversible action is proposed or performed on the far side of it (item 24). Rejection returns
+  the draft for revision, and a reviewer who never approves is stopped by the iteration budget
+  rather than by giving up.
 - Dense in-process retrieval over a committed corpus of synthetic documents. No service is
   needed to run it and no key is needed to test it.
 - Per-agent tool allowlists enforced between the model's request and the executor, not by the
