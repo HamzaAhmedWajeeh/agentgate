@@ -44,9 +44,12 @@ caller anywhere in `src/` fails the build until someone moves the row.
 | Test proving node re-execution from top on resume | **done** | `test_the_interrupted_node_re_executes_from_its_top_on_resume` |
 | No side effect before the interrupt | **done** | `graph/nodes/approval.py`; `test_nothing_above_the_pause_writes_an_audit_event` |
 | Reject-with-feedback → revise → back to the gate | **done** | `graph/nodes/approval.py`; `graph/nodes/supervisor.py` |
-| `execute` reachable only past the gate | **done** | `graph/nodes/execute.py`. It records `irreversible_effects: []`: it performs nothing, because nothing is proposed. Leak inventory item 24 |
-| Irreversible action executed only past the gate | not built | `graph/nodes/execute.py` would run it; the executor allowlist in `tools/registry.py` is declared and held by no agent. Item 24 |
-| Proposed actions carried to the gate as structured data | not built | no state channel exists for them; `tests/integration/test_gate_guards_a_draft.py` pins the absence. Item 24 |
+| `execute` reachable only past the gate | **done** | `graph/nodes/execute.py` |
+| Irreversible action executed only past the gate | **done** | `graph/nodes/execute.py:execute`, holding the `EXECUTOR` allowlist; `tests/integration/test_gate_guards_a_draft.py`. Leak inventory item 24, closed |
+| Proposed actions carried to the gate as structured data | **done** | `graph/state.py:AgentState.proposed_actions`; `effects/proposals.py:screen_proposals` drops what the executor could not run, before the gate |
+| Approval authorises exactly what was shown | **done** | `effects/proposals.py:digest_of`; `graph/nodes/approval.py:approval_gate` refuses a hash that no longer matches; `tests/integration/test_actions_past_the_gate.py` |
+| Effects performed exactly once, across a crash | **done** | `effects/proposals.py:effect_key`; `effects/sink.py:OutboxSink`; the crash-and-resume case in `tests/integration/test_actions_past_the_gate.py` |
+| One effect sink, and configuration refuses any other | **done** | `effects/sink.py:build_effect_sink`; `config.py:EffectSinkBackend`; `tests/unit/test_effects.py` |
 | Iteration cap exercised end to end | **done** | `test_a_reviewer_who_never_approves_is_stopped_by_the_iteration_cap` |
 | `Store` long-term memory, namespaced per user | not built | `config.py` `StoreBackend` exists |
 | Store vs. checkpoint distinction documented | **done** | `config.py` `StoreBackend` docstring; `.env.example` |

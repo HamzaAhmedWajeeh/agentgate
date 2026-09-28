@@ -158,6 +158,19 @@ class VectorBackend(StrEnum):
     QDRANT = "qdrant"
 
 
+class EffectSinkBackend(StrEnum):
+    """Where an approved action's effect goes. See ``effects/sink.py``.
+
+    **One member, on purpose.** The only sink is an append-only outbox on disk: an approved refund
+    or email is *recorded* there and nothing real happens. There is no sink that moves money or
+    sends mail, so there is no value that could select one -- and ``Settings`` refuses any other
+    name at startup with a message saying so, rather than falling back to the outbox. "This
+    performs nothing real" is enforced by configuration, not by a sentence in a README.
+    """
+
+    OUTBOX = "outbox"
+
+
 class TracingBackend(StrEnum):
     """Where OpenTelemetry spans are exported.
 
@@ -381,6 +394,14 @@ class Settings(BaseSettings):
     qdrant_url: str | None = None
     retrieval_top_k: Positive = 4
 
+    # ---------------------------------------------------------------- effects
+
+    effect_sink: EffectSinkBackend = EffectSinkBackend.OUTBOX
+    outbox_path: Path = Path("data/outbox.jsonl")
+    """Where approved effects are recorded, one JSON line each, append-only. Idempotent per
+    effect: a key already in the file is never written again, which is what makes a resumed
+    ``execute`` safe after a crash."""
+
     # ---------------------------------------------------------------- audit
 
     audit_log_path: Path = Path("data/audit.jsonl")
@@ -506,6 +527,18 @@ class Settings(BaseSettings):
             )
             raise ValueError(msg)
         return self
+
+    @field_validator("effect_sink", mode="before")
+    @classmethod
+    def _only_the_outbox_exists(cls, value: object) -> object:
+        if isinstance(value, str) and value.strip().lower() != EffectSinkBackend.OUTBOX.value:
+            msg = (
+                f"{ENV_PREFIX}EFFECT_SINK is {value!r}, and no effect sink but 'outbox' exists. "
+                "Approved actions are recorded to an append-only outbox and nothing real happens; "
+                "there is no sink that moves money or sends mail, so none can be selected"
+            )
+            raise ValueError(msg)
+        return value
 
     @model_validator(mode="after")
     def _backends_have_their_connection_details(self) -> Settings:

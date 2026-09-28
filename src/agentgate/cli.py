@@ -115,6 +115,22 @@ def _render_packet(packet: dict[str, Any], thread_id: str) -> None:
         _echo(f"    {line}")
     _echo()
 
+    # The actions are shown one by one, exactly as they will be performed if approved. Approving
+    # approves these and only these: `approve` carries back the hash of this packet.
+    actions = list(packet.get("proposed_actions", []))
+    if actions:
+        _echo(typer.style("  ACTIONS -- performed only if you approve", fg=typer.colors.YELLOW))
+        for number, action in enumerate(actions, start=1):
+            arguments = ", ".join(
+                f"{name}={value!r}" for name, value in dict(action.get("arguments", {})).items()
+            )
+            _echo(f"    {number}. {action.get('tool', '?')}({arguments})")
+        _echo("    recorded to the outbox; nothing real is performed")
+        _echo()
+    else:
+        _echo("  ACTIONS   none proposed -- approving releases the draft only")
+        _echo()
+
     if not complete:
         _echo(
             typer.style(
@@ -161,7 +177,7 @@ def _stream(
     return dict(snapshot.values), tuple(snapshot.interrupts)
 
 
-def _resume_with(thread_id: str, verdict: dict[str, Any]) -> None:
+def _resume_with(thread_id: str, verdict: dict[str, Any], *, approving: bool = False) -> None:
     """Pick a paused run up from its checkpoint and hand it a decision."""
     from langgraph.types import Command  # noqa: PLC0415 - keeps `--help` fast
 
@@ -179,6 +195,12 @@ def _resume_with(thread_id: str, verdict: dict[str, Any]) -> None:
                 )
             )
             raise typer.Exit(code=1)
+
+        # An approval carries the hash of the packet that was shown -- the one stored with the
+        # pause, not one recomputed now -- so it cannot authorise actions that changed since.
+        if approving and snapshot.interrupts:
+            shown = dict(snapshot.interrupts[0].value).get("proposals_digest")
+            verdict = {**verdict, "approved_digest": shown}
 
         # Resumed with a ledger that starts from what the run already spent, read off the
         # checkpoint -- this is a different process from the one that started the run.
@@ -316,8 +338,8 @@ def resume(thread: str = typer.Argument(..., help="Thread id from `run`.")) -> N
 
 @app.command()
 def approve(thread: str = typer.Argument(..., help="Thread id from `run`.")) -> None:
-    """Approve the draft. Everything past the gate becomes reachable."""
-    _resume_with(thread, {"decision": "approved"})
+    """Approve the draft and the actions shown with it, and only those."""
+    _resume_with(thread, {"decision": "approved"}, approving=True)
 
 
 @app.command()

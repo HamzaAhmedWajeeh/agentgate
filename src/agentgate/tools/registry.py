@@ -82,14 +82,15 @@ class RefundRequest(BaseModel):
 def issue_refund(account: str, amount_units: float) -> str:
     """Credit a refund to an account. Irreversible: money moves.
 
-    Not wired to anything. It exists so the allowlist has something real to exclude and so the
-    approval gate in Phase 5 has something real to gate. A tool that is declared irreversible
-    and quietly does nothing would make every test of the gate vacuous, so this raises rather
-    than returning a plausible string.
+    **The handler is never the effect.** The drafter may *propose* this tool; ``execute`` performs
+    an approved proposal by recording it through the effect sink -- an append-only outbox, the
+    only sink there is -- and never by calling this function. So the handler still raises:
+    reaching it means something called an irreversible tool directly, past both the allowlist and
+    the gate, and a plausible return value would hide exactly that.
     """
     msg = (
         f"issue_refund({account}, {amount_units}) reached its handler. This tool is "
-        "irreversible and is not wired to anything before the approval gate exists (Phase 5). "
+        "irreversible; approved effects go to the outbox, never through this handler. "
         "Reaching this line means an allowlist or a gate did not hold."
     )
     raise NotImplementedError(msg)
@@ -107,12 +108,13 @@ class CustomerEmail(BaseModel):
 def send_customer_email(to: str, subject: str, body: str) -> str:
     """Send a message to a customer. Irreversible: it cannot be unsent.
 
-    Not wired, for the same reason as :func:`issue_refund`.
+    Proposed, approved and recorded to the outbox like :func:`issue_refund`; the handler raises
+    for the same reason.
     """
     msg = (
         f"send_customer_email({to}) reached its handler. This tool is irreversible and is not "
-        "wired to anything before the approval gate exists (Phase 5). Reaching this line "
-        "means an allowlist or a gate did not hold."
+        "called directly: approved effects go to the outbox, never through this handler. "
+        "Reaching this line means an allowlist or a gate did not hold."
     )
     raise NotImplementedError(msg)
 
@@ -134,9 +136,10 @@ a convention is something a future tool can fail to follow without anything noti
 
 ALLOWLISTS: Final[dict[Agent, frozenset[str]]] = {
     Agent.DRAFTER: frozenset({"lookup_policy"}),
-    # Phase 5. The executor exists in this table so the shape of the eventual permission is
-    # visible now, and so the test asserting that only one agent holds irreversible tools has
-    # something to assert against rather than an empty table.
+    # Held by `execute`, which performs approved proposals of these and nothing else, and read
+    # by the proposal screen, which drops a proposal for anything else before the gate. Until
+    # item 24 closed this entry was held by nothing: the permission's shape existed, the holder
+    # did not.
     Agent.EXECUTOR: frozenset({"issue_refund", "send_customer_email"}),
 }
 

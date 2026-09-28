@@ -137,6 +137,18 @@ class Classification(ChannelValue):
     reason: str = Field(default="", description="One line, for the audit trail.")
 
 
+class Proposal(ChannelValue):
+    """An action the drafter proposes and cannot perform: a tool name and its arguments.
+
+    Only the executor's tools are ever kept -- ``effects/proposals.py`` screens every proposal
+    against the ``EXECUTOR`` allowlist and the tool's own argument schema before it reaches state
+    -- so a proposal in state is one the executor could run, and the human is shown exactly it.
+    """
+
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class Finding(ChannelValue):
     """One piece of researched evidence.
 
@@ -268,6 +280,20 @@ class AgentState(TypedDict, total=False):
     finalised: bool
     """Set when the budget guard or the supervisor decides the run is over."""
 
+    proposed_actions: list[dict[str, Any]]
+    """Actions the drafter proposed, screened, as plain dicts: ``{"tool", "arguments"}``.
+
+    Single-writer, by the drafter, and cleared by the gate on a rejection along with the draft --
+    a rejected draft's proposals are not the next draft's. Read with :func:`proposals_of`, which
+    reads a checkpoint from before this channel existed as having none. Leak inventory item 24:
+    until this channel existed, the gate had nothing irreversible to approve."""
+
+    approved_digest: str
+    """The hash of exactly the proposals the human approved, from the packet they were shown.
+
+    Written by the gate on an approval and checked again by ``execute`` before any effect, so a
+    proposal that changed after the approval is refused rather than performed."""
+
     spend: dict[str, dict[str, int]]
     """What the run has spent so far, per model: ``{model: {"input_tokens", "output_tokens"}}``.
 
@@ -283,6 +309,16 @@ class AgentState(TypedDict, total=False):
 def classification_of(state: AgentState) -> Classification | None:
     """The classifier's verdict, parsed, or ``None`` if there isn't a usable one."""
     return Classification.parse(state.get("classification"))
+
+
+def proposals_of(state: AgentState) -> list[Proposal]:
+    """Every proposal in state, parsed. A checkpoint from before proposals existed has none;
+    an entry that no longer fits is skipped rather than fatal, like a finding."""
+    return [
+        parsed
+        for raw in state.get("proposed_actions", []) or []
+        if (parsed := Proposal.parse(raw)) is not None
+    ]
 
 
 def findings_of(state: AgentState) -> list[Finding]:

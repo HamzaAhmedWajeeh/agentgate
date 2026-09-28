@@ -15,7 +15,7 @@ Postgres gives you.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from functools import partial
 from typing import Any, Protocol
 
@@ -25,6 +25,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agentgate.config import CheckpointerBackend, Settings
+from agentgate.effects.sink import EffectSink, build_effect_sink
 from agentgate.errors import AgentgateError
 from agentgate.graph.nodes.approval import approval_gate
 from agentgate.graph.nodes.classify import classify
@@ -66,12 +67,14 @@ class CheckpointerUnavailableError(AgentgateError):
     """The configured checkpointer cannot be constructed from this configuration."""
 
 
-def build_graph(
+def build_graph(  # noqa: PLR0913 - each factory is an injection point a test needs
     settings: Settings,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    *,
     model_factory: ModelFactory = build_model,
     interrupt_before: Sequence[str] | None = None,
     retriever_factory: RetrieverFactory = build_retriever,
+    effect_sink_factory: Callable[[Settings], EffectSink] = build_effect_sink,
 ) -> Any:
     """Assemble and compile the graph.
 
@@ -84,6 +87,8 @@ def build_graph(
             script replies without patching a global.
         retriever_factory: How a research branch obtains a retriever. Injected for the same
             reason, and called lazily -- compiling a graph does not read the corpus.
+        effect_sink_factory: Where ``execute`` records approved effects. Injected so a test can
+            crash a sink after it writes; in the running system it is the outbox, the only sink.
         interrupt_before: Nodes to pause before. A compile-time option in LangGraph 1.x --
             passing it in the invoke config is silently ignored, which makes a paused-run
             test quietly assert nothing. Used for debugging and by the resume tests; the
@@ -112,7 +117,10 @@ def build_graph(
     graph.add_node("researcher", partial(research, settings=settings))
     graph.add_node("drafter", partial(draft, settings=settings, model_factory=model_factory))
     graph.add_node("approval_gate", partial(approval_gate, settings=settings))
-    graph.add_node("execute", partial(execute, settings=settings))
+    graph.add_node(
+        "execute",
+        partial(execute, settings=settings, effect_sink_factory=effect_sink_factory),
+    )
     graph.add_node(RESEARCH_BRANCH, build_retrieval_subgraph(settings, retriever_factory))
     graph.add_node("budget_guard", _budget_guard)
     graph.add_node("finalise", partial(finalise, settings=settings))

@@ -227,7 +227,7 @@ def test_execute_refuses_an_unapproved_state_whatever_the_topology_says() -> Non
     state["decision"] = Decision.REJECTED.value
 
     with pytest.raises(UnapprovedExecutionError, match="Refusing"):
-        execute(state, settings_with())
+        execute(state, settings_with(), run_config(settings_with(), "corr"))
 
 
 # ------------------------------------------------------------------ 3. the cap, exercised
