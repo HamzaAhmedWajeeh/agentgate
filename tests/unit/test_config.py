@@ -673,10 +673,10 @@ def test_classification_runs_on_the_most_contained_lane_available(
     stays open: there is nowhere else to send it, so the egress remains and is recorded as leak
     inventory item 14 rather than described as fixed because the hybrid case improved.
     """
-    assert build(**overrides).classification_lane is expected
+    assert build(**overrides).most_contained_lane is expected
 
 
-def test_the_classification_lane_is_never_less_contained_than_the_default() -> None:
+def test_the_most_contained_lane_is_never_less_contained_than_the_default() -> None:
     """The property that has to hold for every configuration, stated once.
 
     A parametrised list proves the four cases someone thought of. This states the invariant, so a
@@ -696,8 +696,8 @@ def test_the_classification_lane_is_never_less_contained_than_the_default() -> N
         },
     )
 
-    assert CONTAINMENT[settings.classification_lane] <= CONTAINMENT[settings.lane]
-    assert settings.classification_lane in settings.routable_lanes
+    assert CONTAINMENT[settings.most_contained_lane] <= CONTAINMENT[settings.lane]
+    assert settings.most_contained_lane in settings.routable_lanes
 
 
 def test_the_model_identifier_follows_the_lane_it_is_asked_for() -> None:

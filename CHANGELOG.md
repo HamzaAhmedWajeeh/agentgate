@@ -203,7 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Retrieval embeds on the most contained lane the deployment can reach**, so on a hybrid
   deployment neither a restricted request's research queries nor the corpus reach the third party.
-  `build_embeddings` reads `classification_lane` -- the rule classification already uses -- instead
+  `build_embeddings` reads `most_contained_lane` -- the rule classification already uses -- instead
   of the configured default. One index, no routing inside retrieval, no new setting. The cost is
   retrieval quality on every request, public ones included: 90% top-4 against a 20% chance floor,
   measured on this 20-chunk corpus at 301 distinct terms and not beyond it. A cloud-only deployment
@@ -277,6 +277,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Settings.classification_lane` is renamed `most_contained_lane`. Classification runs on it and
+  retrieval now embeds on it, so a name for one caller was already wrong. No behaviour change.
 - `SpendLedger` requires the ceilings it enforces rather than reading the run ceilings off
   configuration. A ledger that inferred its own scope is how the live suite came to be
   measured against a per-run budget. See item 8 of the leak inventory in ADR 0004.

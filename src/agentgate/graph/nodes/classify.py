@@ -70,8 +70,8 @@ def classify(
     # Classification runs before the router, so there is no routed lane to honour -- and the
     # request has not been judged yet, which is exactly why it cannot be sent wherever the
     # deployment happens to default to. The most contained lane available is the only defensible
-    # destination. See Settings.classification_lane, and item 14 for what this does not close.
-    lane = settings.classification_lane
+    # destination. See Settings.most_contained_lane, and item 14 for what this does not close.
+    lane = settings.most_contained_lane
     model_id = settings.model_for(Tier.CHEAP, lane=lane)
 
     model = model_factory(settings, Tier.CHEAP, CallClass.CLASSIFICATION, lane=lane)

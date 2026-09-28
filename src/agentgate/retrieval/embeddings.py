@@ -1,7 +1,7 @@
 """Embeddings, chosen by lane like everything else that reaches a network.
 
 **Which lane: the most contained one the deployment can reach**, not the configured default and
-not the routed one. That is :attr:`Settings.classification_lane`, the same rule classification
+not the routed one. That is :attr:`Settings.most_contained_lane`, the same rule classification
 uses, and deliberately not a second copy of it. On that lane the cloud uses the configured
 embedding model; every other lane uses :class:`HashingEmbeddings`, an in-process deterministic
 vectoriser with no network and no cost, which is also what lets the whole test suite exercise real
@@ -206,7 +206,7 @@ def build_embeddings(settings: Settings) -> Embeddings:
     """
     # Not ``settings.lane``, which is the configured default and on a hybrid deployment is the
     # cloud: that sent restricted research queries, and the whole corpus, to the third party.
-    if settings.classification_lane is not Lane.CLOUD:
+    if settings.most_contained_lane is not Lane.CLOUD:
         return HashingEmbeddings()
 
     if not settings.embedding_model:

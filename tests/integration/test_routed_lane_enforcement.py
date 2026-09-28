@@ -405,7 +405,7 @@ def test_a_cloud_only_deployment_classifies_on_the_cloud_lane_as_documented_egre
             CLOUD_CHEAP: {"input": 0.1, "output": 0.4},
         },
     )
-    assert settings.classification_lane is Lane.CLOUD, "precondition: nowhere else to classify"
+    assert settings.most_contained_lane is Lane.CLOUD, "precondition: nowhere else to classify"
 
     # And then it refuses, which is the other half of the story. Policy sends the request
     # somewhere more contained, there is no such lane, and the only alternative to stopping is
@@ -690,7 +690,7 @@ def test_a_cloud_only_deployment_embeds_on_the_cloud_lane_as_documented_egress(
     """
     cloud.behaviour.reply = verdict("public", pii=False)
     settings = cloud_only_with_embeddings(cloud)
-    assert settings.classification_lane is Lane.CLOUD, "precondition: nowhere else to embed"
+    assert settings.most_contained_lane is Lane.CLOUD, "precondition: nowhere else to embed"
 
     result = run_with_research(settings, PUBLIC_REQUEST, PUBLIC_RETRIEVAL_QUESTION)
 

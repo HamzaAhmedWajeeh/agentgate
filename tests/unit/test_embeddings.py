@@ -147,7 +147,7 @@ CLOUD_WITH_EMBEDDINGS: dict[str, object] = {
 
 def test_a_hybrid_deployment_embeds_in_process_whatever_its_default_lane() -> None:
     """Leak inventory item 17. Retrieval embeds on the most contained lane the deployment can
-    reach -- `classification_lane`, the one rule for that question -- not on the configured
+    reach -- `most_contained_lane`, the one rule for that question -- not on the configured
     default. A cloud-default deployment with a sovereign endpoint indexes in process."""
     settings = settings_with(
         **CLOUD_WITH_EMBEDDINGS, sovereign_base_url="http://127.0.0.1:9", sovereign_model="s"

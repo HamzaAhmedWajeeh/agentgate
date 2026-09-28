@@ -118,8 +118,8 @@ Things this build surfaced that were not on the original list, kept because each
 | Policy gate fails closed on an unparseable verdict | **done** | `graph/nodes/classify.py`; `tests/unit/test_nodes.py` |
 | Routed lane applied at model construction, asserted on the wire | **done** | `models/registry.py:build_model`; `tests/integration/test_routed_lane_enforcement.py` |
 | Route narrows the configured lane and cannot widen it | **done** | `config.py:narrower_of`; `config.py:CONTAINMENT` |
-| Classification runs on the most contained lane available | **done** | `config.py:classification_lane`; `graph/nodes/classify.py` |
-| Retrieval embeds on the most contained lane available, one index for every route | **done** | `retrieval/embeddings.py:build_embeddings` reads `config.py:classification_lane`. Closes ADR 0004 item 17 on hybrid deployments; a cloud-only deployment still embeds on the cloud |
+| Classification runs on the most contained lane available | **done** | `config.py:most_contained_lane`; `graph/nodes/classify.py` |
+| Retrieval embeds on the most contained lane available, one index for every route | **done** | `retrieval/embeddings.py:build_embeddings` reads `config.py:most_contained_lane`. Closes ADR 0004 item 17 on hybrid deployments; a cloud-only deployment still embeds on the cloud |
 | Embedding requests can be observed on the wire | **done** | `retrieval/embeddings.py`; `tests/doubles/openai_compatible.py:decode_embedding_input` |
 | The stub server speaks SSE, so a networked lane can be driven from the CLI | **done** | `tests/doubles/openai_compatible.py`; `tests/integration/test_cli.py` |
 | An agentgate error from the CLI is reported, not traced | **done** | `cli.py:main`; `tests/integration/test_cli.py` |
