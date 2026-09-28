@@ -43,36 +43,34 @@ Item 19 is a row that said *closed*, named the class that closed it, and that cl
 A unit test cannot find this. An integration test only finds it if it asserts on something outside
 the process. **When something looks done, check what calls it.**
 
-## The one open decision: item 17
+## Item 17: decided and closed for hybrid deployments
 
-Retrieval embeds on the configured lane and never sees the routed lane, so on a hybrid deployment a
-restricted request has its research queries — and the whole corpus — embedded by the third party.
+Retrieval embedded on the configured lane and never saw the routed lane, so on a hybrid deployment
+a restricted request had its research queries — and the whole corpus — embedded by the third party.
 
-**Instrumentation is merged; the fix is not built.** The egress is observable (`openai_api_base` is
-passed, the stub serves `/v1/embeddings`, `decode_embedding_input` decodes the token ids the client
-actually sends) and pinned by a test asserting the leak *happens* — so closing it inverts a named
-test rather than passing silently.
+**Decided 2026-09-28: index on the most contained lane.** `build_embeddings` dispatches on
+`Settings.most_contained_lane`. One index, no routing inside retrieval, no new setting. On a hybrid
+deployment the corpus and every research query are embedded in process, public requests included,
+and nothing from either reaches the third party. The test that asserted the leak happened now
+asserts its absence; ADR 0004 item 17 has the full record.
 
-Measured 2026-09-27 via `make measure-retrieval`; questions and expected chunks are committed in
-`scripts/retrieval_questions.json`:
+- **Open for cloud-only deployments.** Their most contained lane *is* the cloud, so the corpus and
+  public sub-questions are still embedded there, pinned as documented egress — the same shape as
+  item 14. Item 19 is sidestepped on hybrid deployments only; on cloud-only, that embedding spend
+  is still accounted by nothing.
+- **The cost is retrieval quality on every request.** Measured via `make measure-retrieval`: **90%
+  top-4 against a 20% chance floor**. That figure belongs to this **20-chunk corpus at 301 distinct
+  terms**. ADR 0010's collision curve degrades a hashing index as vocabulary grows, so a corpus an
+  order of magnitude larger needs re-measuring before the figure means anything.
+- **Per-lane indexes were ruled out:** without a sovereign embedding endpoint the sovereign index
+  would be built by the hashing embedder, so retrieval quality would correlate exactly with
+  sensitivity. A sovereign embedding endpoint composes with this later, behind the same rule.
 
-- Hashing: **90% top-4 against a 20% chance floor**, 4/5 on synonym-only questions. The stub is a
-  deliberately meaningless embedder and scored 10% — which is what makes 90% readable.
-- **Build cost does not distinguish the options**: 0.013 s vs 0.020 s, one batched call for 20
-  chunks. Numbers belong to this corpus at this size; ADR 0010 has the curve that degrades a
-  hashing index as vocabulary grows.
+**`most_contained_lane` is the single rule for "which lane is most contained".** Classification
+and retrieval both read it, and Part B will be its third caller. Do not write a second answer to
+that question — two homes for one policy eventually give two answers.
 
-**Leaning: index on the contained lane only.** One index, no routing in retrieval, no corpus
-content reaching a third party, and the guarantee stops being conditional. Composes with a
-sovereign embedding endpoint later. **Per-lane indexes are ruled out:** without such an endpoint
-the sovereign index would be built by the hashing embedder, so retrieval quality would correlate
-exactly with sensitivity, which is worse than the leak.
-
-**Item 19 must be wired first for any option that keeps embedding on the cloud lane**, and wiring
-it makes an index build something that can fail partway through on a spend ceiling. The full
-options table is in ADR 0004 under *Closing item 17*.
-
-## Part B, blocked until item 17 closes
+## Part B: the next step is B1
 
 A decider in front of the approval gate. Jev is TypeSafe AI's decision model — typed questions in,
 typed answers with probabilities out. **Not a chat model**, so do not give it a chat interface.
@@ -89,7 +87,7 @@ typed answers with probabilities out. **Not a chat model**, so do not give it a 
 - Startup validation rejects the contradictory combinations (backend on with no key; a decider on a
   deployment with no cloud lane; enforce mode with an implausible threshold).
 - No SDK and no third-party free-key mirrors.
-- **First step is B1**: verify the request and response schema against docs.typesafe.ai before
+- **B1 is next**: verify the request and response schema against docs.typesafe.ai before
   writing any code. Do not build against a guessed schema.
 
 ## Two local facts
