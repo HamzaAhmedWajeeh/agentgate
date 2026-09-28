@@ -41,6 +41,10 @@ PERMITTED_UNPREFIXED_READS: dict[str, set[str]] = {
     "openai_api_key": {"OPENAI_API_KEY"},
     "langsmith_api_key": {"LANGSMITH_API_KEY"},
     "langsmith_project": {"LANGSMITH_PROJECT"},
+    # TypeSafe's own tooling reads this name. Accepted so an operator with a key already set
+    # need not set it twice -- and declared here, because it is a credential arriving from the
+    # shared namespace. B3 strips it from the offline suite's environment.
+    "jev_api_key": {"TYPESAFE_API_KEY"},
 }
 
 
@@ -143,7 +147,9 @@ def test_every_permitted_read_is_a_conventional_third_party_name() -> None:
 
     A name invented here has no such excuse and belongs under the prefix.
     """
-    conventional_prefixes = ("OPENAI_", "LANGSMITH_")
+    # TYPESAFE_: the TypeSafe SDK reads TYPESAFE_API_KEY by default (docs.typesafe.ai
+    # quick start, read 2026-09-28), which is what makes it the ecosystem's name and not ours.
+    conventional_prefixes = ("OPENAI_", "LANGSMITH_", "TYPESAFE_")
 
     for names in PERMITTED_UNPREFIXED_READS.values():
         for name in names:

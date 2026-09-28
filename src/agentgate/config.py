@@ -24,6 +24,7 @@ entry point had to know to step around. See
 from __future__ import annotations
 
 import os
+import re
 from difflib import get_close_matches
 from enum import StrEnum
 from functools import lru_cache, reduce
@@ -189,6 +190,34 @@ class TracingBackend(StrEnum):
     """Any OTLP collector, including one inside your own network. The self-hostable path."""
 
 
+class DeciderBackend(StrEnum):
+    """What, if anything, assesses a draft before the approval gate. See docs/adr/0012.
+
+    The decider can only auto-approve or ask a human; it never rejects. It runs only when the
+    routed lane is cloud, because every backend here is a cloud egress.
+    """
+
+    NONE = "none"
+    """Off. Every draft goes to a human, as it did before the decider existed."""
+
+    JEV = "jev"
+    """TypeSafe's decision model: typed questions in, calibrated probabilities out."""
+
+    LLM = "llm"
+    """The cloud chat lane asked the same questions. No calibrated confidence."""
+
+
+class DeciderMode(StrEnum):
+    """Whether the decider's verdict is acted on."""
+
+    SHADOW = "shadow"
+    """Recorded beside the human's decision and never acted on. The default, because the
+    thresholds enforce mode needs come from measuring this agreement."""
+
+    ENFORCE = "enforce"
+    """An auto-approve verdict that meets every threshold skips the human."""
+
+
 class LogLevel(StrEnum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -206,6 +235,16 @@ Port = Annotated[int, Field(ge=1, le=65535)]
 Positive = Annotated[int, Field(gt=0)]
 PositiveFloat = Annotated[float, Field(gt=0)]
 UnitInterval = Annotated[float, Field(ge=0.0, le=2.0)]
+Probability = Annotated[float, Field(ge=0.0, le=1.0)]
+
+EVEN_ODDS: Final = 0.5
+"""Where a two-outcome answer stops leaning either way: the route Choice's winner is always at or
+above it, and a Noul above it says "more likely yes". The vacuity bounds on the auto-approve
+thresholds are stated against this rather than against a number chosen for looking safe."""
+
+EXACT_VERSION: Final = re.compile(r"-\d+\.\d+\.\d+$")
+"""A versioned model identifier ends in major.minor.patch, as ``jev-1.13.0`` does. Aliases such
+as ``jev-latest`` do not, and neither does ``jev-1.13``, which names a line, not a release."""
 
 
 class Settings(BaseSettings):
@@ -292,6 +331,50 @@ class Settings(BaseSettings):
     sovereign_model: str | None = None
     sovereign_api_key: SecretStr = SecretStr("not-required")
     """Most self-hosted OpenAI-compatible servers ignore this but reject a missing header."""
+
+    # ---------------------------------------------------------------- the decider
+    #
+    # An egress point with the authority to skip a human, so every setting either says where the
+    # egress goes or bounds when the authority applies. Configuration decides what is AVAILABLE;
+    # the policy router still decides what is ALLOWED per request, and the decider runs only when
+    # the routed lane is cloud. See docs/adr/0012.
+
+    decider_backend: DeciderBackend = DeciderBackend.NONE
+    decider_mode: DeciderMode = DeciderMode.SHADOW
+
+    jev_base_url: str = "https://api.typesafe.ai/v1"
+    """TypeSafe's official API. Overridable so a stub can observe what is sent, which is the only
+    way an assertion about this egress can read the wire."""
+
+    jev_model: str = Field(default="jev-1.13.0", validate_default=True)
+    """An exact version, never an alias.
+
+    The one model identifier with a default, and deliberately. The auto-approve thresholds are
+    measured against a specific model's answers, so the version is part of what those numbers
+    mean: ``jev-latest`` moves on a release and would silently invalidate every threshold tuned
+    against the version it used to point at. Moving it is an operator decision taken with a new
+    shadow-mode measurement, not a side effect of TypeSafe shipping.
+    """
+
+    jev_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(f"{ENV_PREFIX}JEV_API_KEY", "TYPESAFE_API_KEY"),
+    )
+
+    # The three conditions an auto-approve must meet, each read off a field the API returns.
+    # No defaults: they come from measured shadow-mode agreement, and a default would be a number
+    # nobody measured, in force for everyone who did not override it. Required in enforce mode.
+
+    auto_approve_min_probability: Probability | None = None
+    """The route Choice's probability for ``auto_approve`` must be at or above this."""
+
+    auto_approve_min_confidence: Probability | None = None
+    """The route Choice's reported ``confidence`` must be at or above this. The field as
+    returned, never recomputed from the probabilities."""
+
+    auto_approve_max_irreversibility: Probability | None = None
+    """The irreversibility Noul must be at or below this. A Noul carries no confidence, so this
+    reads its probability and nothing is invented to stand in for one."""
 
     # ---------------------------------------------------------------- budget gates
 
@@ -457,7 +540,11 @@ class Settings(BaseSettings):
         return data
 
     @field_validator(
-        "openai_base_url", "sovereign_base_url", "qdrant_url", "otel_exporter_endpoint"
+        "openai_base_url",
+        "sovereign_base_url",
+        "qdrant_url",
+        "otel_exporter_endpoint",
+        "jev_base_url",
     )
     @classmethod
     def _must_look_like_a_url(cls, value: str | None) -> str | None:
@@ -540,6 +627,115 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         return value
 
+    @field_validator("jev_model")
+    @classmethod
+    def _jev_model_is_an_exact_version(cls, value: str) -> str:
+        if not EXACT_VERSION.search(value):
+            msg = (
+                f"{ENV_PREFIX}JEV_MODEL is {value!r}; it must name an exact version such as "
+                "jev-1.13.0. An alias moves when TypeSafe ships, and every auto-approve threshold "
+                "was measured against the version it used to point at"
+            )
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def _decider_can_run_where_it_is_configured(self) -> Settings:
+        """A decider that can never run, or cannot authenticate, is refused here.
+
+        Both fail later and worse otherwise: one silently never assesses anything, the other
+        fails at the first draft. The first is also a contradiction in intent -- the decider is a
+        cloud egress, so a deployment with no routable cloud lane (fake, or sovereign by default,
+        which cannot widen) has chosen not to send data to a third party, and configuring a
+        decider says it will send data to TypeSafe anyway.
+        """
+        if self.decider_backend is DeciderBackend.NONE:
+            return self
+        if Lane.CLOUD not in self.routable_lanes:
+            routes = ", ".join(sorted(lane.value for lane in self.routable_lanes))
+            msg = (
+                f"{ENV_PREFIX}DECIDER_BACKEND is {self.decider_backend.value!r} but this "
+                f"deployment has no cloud lane (it can route to: {routes}). The decider runs "
+                "only when a request is routed to the cloud, so here it would never run -- and a "
+                "deployment that does not send data to OpenAI should not send it to a decider"
+            )
+            raise ValueError(msg)
+        if self.decider_backend is DeciderBackend.JEV and self.jev_api_key is None:
+            msg = (
+                f"{ENV_PREFIX}DECIDER_BACKEND is 'jev' but {ENV_PREFIX}JEV_API_KEY "
+                "(or TYPESAFE_API_KEY) is not set"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _enforce_mode_has_thresholds_that_can_fail(self) -> Settings:
+        """Enforcement is only as strict as its weakest condition.
+
+        Each threshold is refused where it is *vacuous* -- met by every answer the API can
+        return -- and nowhere else. A stricter floor would be a number chosen here, and the
+        thresholds are meant to come from measured shadow-mode agreement.
+
+        - The route Choice has two options, so its winner is always at 0.5 or above: a minimum
+          probability at or below 0.5 is met by ``route == auto_approve`` alone.
+        - Confidence is reported in [0, 1], so a minimum of 0 is met by every answer.
+        - A maximum irreversibility at or above 0.5 admits a Noul that says "more likely
+          irreversible than not".
+        """
+        if self.decider_mode is not DeciderMode.ENFORCE:
+            return self
+        if self.decider_backend is DeciderBackend.NONE:
+            msg = (
+                f"{ENV_PREFIX}DECIDER_MODE is 'enforce' but {ENV_PREFIX}DECIDER_BACKEND is "
+                "'none': there is nothing to enforce, and an operator reading the mode would "
+                "believe drafts were being assessed"
+            )
+            raise ValueError(msg)
+
+        minimum_probability = self.auto_approve_min_probability
+        minimum_confidence = self.auto_approve_min_confidence
+        maximum_irreversibility = self.auto_approve_max_irreversibility
+        missing = [
+            f"{ENV_PREFIX}{name.upper()}"
+            for name, value in (
+                ("auto_approve_min_probability", minimum_probability),
+                ("auto_approve_min_confidence", minimum_confidence),
+                ("auto_approve_max_irreversibility", maximum_irreversibility),
+            )
+            if value is None
+        ]
+        if missing:
+            msg = (
+                f"{ENV_PREFIX}DECIDER_MODE is 'enforce' but {', '.join(missing)} "
+                f"{'is' if len(missing) == 1 else 'are'} not set. Measure them in shadow mode "
+                "first: each is a condition an auto-approve has to meet"
+            )
+            raise ValueError(msg)
+        assert minimum_probability is not None  # noqa: S101 - narrowed by `missing` above
+        assert minimum_confidence is not None  # noqa: S101
+        assert maximum_irreversibility is not None  # noqa: S101
+
+        vacuous = []
+        if minimum_probability <= EVEN_ODDS:
+            vacuous.append(
+                f"{ENV_PREFIX}AUTO_APPROVE_MIN_PROBABILITY={minimum_probability} must exceed "
+                "0.5, because a two-option Choice's winner is always at or above it"
+            )
+        if minimum_confidence <= 0.0:
+            vacuous.append(
+                f"{ENV_PREFIX}AUTO_APPROVE_MIN_CONFIDENCE={minimum_confidence} must exceed 0, "
+                "because every reported confidence meets it"
+            )
+        if maximum_irreversibility >= EVEN_ODDS:
+            vacuous.append(
+                f"{ENV_PREFIX}AUTO_APPROVE_MAX_IRREVERSIBILITY={maximum_irreversibility} must be "
+                "below 0.5, or an answer of 'more likely irreversible' passes"
+            )
+        if vacuous:
+            msg = "enforce mode has a threshold no answer can fail: " + "; ".join(vacuous)
+            raise ValueError(msg)
+        return self
+
     @model_validator(mode="after")
     def _backends_have_their_connection_details(self) -> Settings:
         if self.checkpointer is CheckpointerBackend.POSTGRES and not self.postgres_dsn:
@@ -579,6 +775,9 @@ class Settings(BaseSettings):
         }
         if self.embedding_model:
             reachable.add(self.embedding_model)
+        # The decider's model is priced like any other it can reach, and only when it can.
+        if self.decider_backend is DeciderBackend.JEV:
+            reachable.add(self.jev_model)
         unpriced = sorted(
             model for model in reachable if model not in self.model_prices_usd_per_million
         )

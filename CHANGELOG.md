@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recommending that spelling; pinned in `test_toolchain_blind_spots.py`. 23: native structured
   output let the client parse inside the call, so a billed reply that failed to validate reported no
   usage -- five requests at the stub, four in the book.
+- Decider configuration, validated at startup: `AGENTGATE_DECIDER_BACKEND` (`none` | `jev` | `llm`,
+  default `none`), `AGENTGATE_DECIDER_MODE` (`shadow` | `enforce`, default `shadow`), the Jev base
+  URL, key and model, and three auto-approve thresholds -- route probability, route confidence and
+  irreversibility -- each reading a field the TypeSafe API returns. **Configuration only: nothing
+  reads these settings yet**, so no decider runs and nothing here is a claim about behaviour.
+  Refused at startup, each with a message naming the variable: a Jev backend with no key; any
+  decider on a deployment with no routable cloud lane; a Jev model that is not an exact version;
+  an unpriced Jev model; enforce mode with no backend, a missing threshold, or a threshold no
+  answer can fail. `TYPESAFE_API_KEY` is a declared alias, added to the permitted unprefixed reads.
 - `src/` layout, packaged with hatchling, exposing a typed `agentgate` distribution.
 - Pinned dependency set: LangGraph 1.2.10 and LangChain 1.3.14 for orchestration, both SQLite
   and Postgres checkpointers, FastAPI and Typer surfaces, and the structlog / OpenTelemetry /
