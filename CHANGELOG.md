@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `env/sovereign.env` and `env/hybrid.env`: deployment examples with every setting stated -- no profile
+  variable -- including the effect sink and outbox path. Secrets are left blank and model identifiers
+  are placeholders; a test holds each file to the settings model and loads it once its secrets are
+  supplied. The hybrid example runs Jev in shadow mode with no threshold set.
 - **The decider in front of the approval gate** (Part B, B5). An `assess` node, between the
   supervisor and the gate, asks the decider once per draft -- only on a cloud-routed request, and
   charged to the run ledger -- and stores its verdict as JSON. It is sent structured facts: the
