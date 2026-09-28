@@ -64,22 +64,22 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
   the build.
 - An output check on citation provenance — every source the draft cites must be one research
   actually returned. Exact rather than heuristic, and it cannot see an uncited fabrication.
-- Embedding spend goes through the same ledger as chat spend, on the same rules: usage-or-error,
-  an unpriced model refuses to start, recorded per model.
 
 **Not built.** Long-term memory and time travel, the FastAPI and CLI surfaces, streaming,
 structlog/OpenTelemetry/Prometheus instrumentation, and the eval suite. `docs/concept-map.md`
 lists every concept and marks each one built or not built; a row there describes the repository
 as it is today.
 
-**Built but not yet wired.** The spend ledger enforces run and session ceilings, and the
-embedding path accounts against it, but the chat calls in the graph do not yet. Until they do,
-the run and session ceilings bound embedding spend and what `make measure` derives, not what a
-run's model calls actually consume.
+**Built but not yet wired.** The spend ledger enforces run and session ceilings, and nothing in
+the graph accounts against it -- not the chat calls, and not the embedding path either. Until
+something does, the run and session ceilings bound what `make measure` derives, not what a run
+actually spends.
 
 **Embedding spend is not accounted, and the row saying it was has been corrected.** Item 9 of
 that inventory recorded the gap as closed by `AccountedEmbeddings`. Nothing constructs it, so
-embedding spend is still invisible to every ceiling. Reopened as item 19.
+embedding spend is still invisible to every ceiling. Reopened as item 19. Until item 20 this
+README also said the opposite, three paragraphs earlier: that embedding spend went through the
+ledger and chat spend was the half left to wire.
 
 **Streamed calls report no token usage.** `langchain-openai` does not ask for it and the CLI is
 the only surface that streams, so every model call made through the command line is unmeasured.
@@ -114,10 +114,10 @@ lane is not claimed: a classifier that cannot produce a verdict fails closed to 
 the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
 
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — nineteen entries, each
-established by running something rather than by reading it, each pinned by a test. Two of them are
-corrections to earlier rows in the same document: item 19 reopens item 9, which said *closed* and
-was not. It says
+an inventory of every place something claimed one thing and did another — twenty entries, each
+established by running something or by checking a claim against what calls it. Two of them are
+corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed* and
+was not, and item 20 corrects this README, which said embedding spend was accounted. It says
 plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
 exercised. It is the most honest document here.
 

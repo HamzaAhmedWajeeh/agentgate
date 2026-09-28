@@ -1,4 +1,8 @@
-"""Embedding spend, accounted the same way chat spend is.
+"""Embedding spend, accounted on the same rules as chat spend.
+
+**Not wired.** Nothing outside this module constructs :class:`AccountedEmbeddings`, and no chat
+call reaches the ledger either, so today neither kind of spend is accounted by anything. Leak
+inventory item 19; this docstring said otherwise until item 20.
 
 Leak-inventory item 9 was that it was not. The ledger reads ``usage_metadata`` off chat replies;
 embeddings do not produce one, so on the cloud lane indexing and querying the corpus cost money

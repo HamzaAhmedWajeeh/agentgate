@@ -196,7 +196,7 @@ some tokens on a fallback rather than a provider exception in a node that cannot
 | Gap | What would close it |
 | --- | --- |
 | Tool calling, on any lane | Tools exist as of Phase 4 and the drafter binds them, but no live case has watched a real provider emit a tool call. A live case would change the suite's cost estimate and therefore its ceiling, so it lands with the next measured live run. |
-| Embeddings, on the cloud lane | Wired, accounted, and never called against a real provider. The usage field the ledger reads (item 11) has only been exercised against a double. The offline lane embeds in-process, so nothing in CI touches this path — see item 9 for the ceiling consequence. |
+| Embeddings, on the cloud lane | Wired, **not accounted** (item 19), and never called against a real provider. The usage field `AccountedEmbeddings` would read (item 11) has only been exercised against a double. This cell said *accounted* until item 20. The offline lane embeds in-process, so nothing in CI touches this path — see item 9 for the ceiling consequence. |
 | Streaming, on any lane | Phase 7, when the SSE surface exists. |
 | Ollama and vLLM behaviour | Neither has been run against. The stub stands in for the shape, not for a specific server. |
 
@@ -304,6 +304,18 @@ in 16 -- are the identical shape: **code that is correct, tested, and called fro
 something was run and produced a surprising answer, which means the ones not yet found are the
 ones nothing has exercised. The correct response to a suspected difference is to write a test
 that provokes it, not to add a defensive branch.
+
+### 20. The README said embedding spend was accounted, and chat spend was the half left to wire
+
+| | |
+| --- | --- |
+| **Difference** | Item 19 inverted, in prose. The README's list of what exists said *"Embedding spend goes through the same ledger as chat spend, on the same rules"*, and its limitations section said *"the embedding path accounts against it, but the chat calls in the graph do not yet ... the run and session ceilings bound embedding spend"*. Both halves are false: `AccountedEmbeddings` is constructed by nothing (item 19) and no chat call reaches the ledger (items 18 and 19 both say so). **Neither kind of spend is accounted.** The same README, three paragraphs further down, carried item 19's correction -- which was added next to the claim it contradicts without removing it. |
+| **Also said it** | Item 12's gaps table (*"Wired, accounted"*), `retrieval/accounting.py`'s module docstring (*"accounted the same way chat spend is"*), and the changelog entry that recorded item 9 as closed. |
+| **How established** | A status summary repeated the README's version back, and was checked against items 9 and 19. Then `grep -rn -i "ledger\|accounted"` over `README.md`, `docs/`, `CHANGELOG.md` and `src/`, reading every hit against what calls it. |
+| **Consequence** | The rule item 19 produced -- **a class with no caller is evidence about the class** -- applies to sentences as well. A correction recorded beside a claim rather than in place of it leaves both standing, and a reader who stops at the first one leaves with the wrong answer. Every hit is now corrected in place. |
+| **Not guarded** | Nothing enforces prose. The enforced record is `docs/concept-map.md`, where `AccountedEmbeddings` is **built, not wired** and a test holds it there; a sentence elsewhere that contradicts that row is found only by reading. A phrase-matching test over the README was considered and not written: it would pass the moment the wording changed, which is the vacuous guard this repository keeps finding. |
+| **Recorded** | Here, and in the corrected README, item 12, `accounting.py` and the changelog. |
+| **Closed by** | `docs: correct the claim that embedding spend is accounted` -- the correction, not the wiring. Items 18 and 19 remain open. |
 
 ## Closing item 17: the index is the hard part
 
