@@ -141,8 +141,9 @@ the cost of a weak one is the cloud lane going unused, and nobody has measured h
 an inventory of every place something claimed one thing and did another — twenty-five entries,
 each established by running something or by checking a claim against what calls it. Two of them
 are corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed*
-and was not, and item 20 corrects this README, which said embedding spend was accounted. The last
-two were found by the run ledger itself, the first time anything counted requests against the book.
+and was not, and item 20 corrects this README, which said embedding spend was accounted. Items 22
+and 23 were found by the run ledger itself, the first time anything counted requests against the
+book.
 It says
 plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
 exercised. It is the most honest document here.
