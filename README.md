@@ -138,7 +138,7 @@ lane is not claimed: a classifier that cannot produce a verdict fails closed to 
 the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
 
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — twenty-three entries,
+an inventory of every place something claimed one thing and did another — twenty-five entries,
 each established by running something or by checking a claim against what calls it. Two of them
 are corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed*
 and was not, and item 20 corrects this README, which said embedding spend was accounted. The last
