@@ -380,6 +380,17 @@ that provokes it, not to add a defensive branch.
 | **Recorded** | Here and in the test. Version-specific: re-check on a `langchain` upgrade. |
 | **Closed by** | Nothing to close in this code; the mechanism is avoided, and the pin makes a change in it visible. |
 
+### 26. A state update at a paused interrupt consumes the pause -- and can walk past it
+
+| | |
+| --- | --- |
+| **Difference** | `update_state` on a thread paused in `interrupt()` drops the pending pause, and nothing says so. Which node the write is credited to decides what happens next. **Written as the paused node itself, the pause counts as finished:** the resume value is discarded, and the node's static successor runs *without the human's decision*. With no node named, the write is credited to the last writer; in this graph that is the supervisor, which routes by `Command` and so leaves no next node -- **the run silently ends**, and a resume after it is a no-op that raises nothing. |
+| **How established** | While pinning item 24's "a proposal changed between the pause and the resume is refused". The first version of that test wrote the change with `update_state` and no node named. The run ended there, so the resume never reached the gate -- and the test's absence assertion, *nothing was performed*, passed for that reason and not for the one it claimed. Caught because its other assertion, *the refusal was recorded*, failed. Then probed: on a toy `draft -> gate -> act` graph, an update written as `gate` ran `act` with the verdict never delivered; on this graph, the same updates left no next node. |
+| **Evidence** | `tests/integration/test_toolchain_blind_spots.py::test_a_state_update_written_as_the_paused_node_walks_past_its_interrupt`, with `::test_without_the_update_the_same_resume_delivers_the_decision` as its control. `::test_in_agentgate_an_update_at_the_gate_ends_the_run_and_can_reach_nothing` pins why this graph survives, including an approval written *as the gate*. Mutation-checked: a static edge from `approval_gate` to `execute` turns that case red -- the approval walks through to `execute`. |
+| **Consequence** | This graph is safe because of topology, and now provably so: the approval gate leaves only by `Command`, with no static edge out, and `execute` re-checks the decision and the approval hash on its own. **The rule for anyone editing the graph:** an interrupting node must never gain a static successor that acts, or a state update can approve on a human's behalf. Tests that change state between a pause and a resume must write as a node *upstream* of the pause and route back through it -- which is what item 24's test now does -- or they are asserting about a run that ended. Same family as items 4, 22 and 25: a toolchain behaviour that is not an error. |
+| **Recorded** | Here, in the test, and in item 24's tampering test, which explains why it writes as the drafter. Version-specific: re-check on a `langgraph` upgrade. |
+| **Closed by** | Nothing to close in this code. Pinned so that a topology change, or an upgrade that changes the behaviour, is visible. |
+
 ## Closing item 17: the index is the hard part
 
 **Decided 2026-09-28: index on the contained lane.** Item 17 above records the decision, what it

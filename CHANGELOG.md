@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ADR 0004 item 26: `update_state` on a paused interrupt drops the pause silently. Written as the
+  paused node, the resume value is discarded and a static successor runs without the human's
+  decision; with no node named, this graph's run ends and the next resume is a no-op. This graph
+  survives because the approval gate leaves only by `Command` -- pinned, and mutation-checked by
+  adding a static edge out of the gate, which lets an approval written as the gate reach `execute`.
 - **Actions past the gate** (ADR 0004 item 24, closed). The drafter's final message is a JSON
   object -- the draft and proposed actions, each a tool name and arguments -- parsed strictly by
   this code and failing closed. Proposals the executor could not run are dropped before the gate and
