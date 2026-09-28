@@ -8,7 +8,13 @@ import pytest
 from pydantic import ValidationError
 
 from agentgate.config import DeciderBackend, Lane, Settings
-from agentgate.decider.assessment import AUTO_APPROVE, HUMAN_REVIEW, Assessment
+from agentgate.decider.assessment import (
+    AUTO_APPROVE,
+    DETERMINISTIC_PRECONDITIONS,
+    HUMAN_REVIEW,
+    QUESTIONS,
+    Assessment,
+)
 from agentgate.decider.build import build_decider
 from agentgate.decider.capabilities import (
     DECIDER_CAPABILITY_MATRIX,
@@ -181,3 +187,21 @@ def test_the_llm_backend_rides_the_cloud_lane() -> None:
     settings = cloud(decider_backend="llm")
 
     assert Lane.CLOUD in settings.routable_lanes
+
+
+# ------------------------------------------------------------------------- the questions
+
+
+def test_no_question_asks_the_model_to_rederive_a_deterministic_precondition() -> None:
+    """A fact code can check is checked in code, by the gate, and left out of the questions:
+    asking a model to re-derive a boolean already in the state only adds a way to get it wrong.
+    Jev is asked the part that needs judgement."""
+    asked = json.dumps(QUESTIONS)
+
+    assert DETERMINISTIC_PRECONDITIONS, "an empty tuple would make this vacuous"
+    assert [field for field in DETERMINISTIC_PRECONDITIONS if field in asked] == []
+
+
+def test_the_questions_still_point_at_the_state_they_judge() -> None:
+    """The control: the check above can see a field name when one is there."""
+    assert "`proposed_actions`" in json.dumps(QUESTIONS)

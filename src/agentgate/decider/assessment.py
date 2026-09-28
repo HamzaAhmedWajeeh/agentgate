@@ -9,9 +9,12 @@
   so none is invented for it.
 
 The wording refers to fields of the state by name in backticks, which is how TypeSafe's docs say
-to point a question at structured state. The state itself is built by the assess node (B5) from
-facts the drafter did not author: the routed lane, the finding count, the tools that were denied,
-whether the provenance check passed, and the proposed actions.
+to point a question at structured state. **It asks only what needs judgement.** Facts code can
+check -- whether provenance passed, whether a tool was denied -- are
+:data:`DETERMINISTIC_PRECONDITIONS`, checked by the gate and named by no question. The state
+itself is built by the assess node (B5) from facts the drafter did not author: the routed lane,
+the finding count, the tools that were denied, whether the provenance check passed, and the
+proposed actions.
 
 **The answer.** :class:`Assessment` is what gets stored, as plain JSON (ADR 0011). A failed
 assessment is still an :class:`Assessment`, with ``failure`` set and every answer field ``None``
@@ -32,6 +35,12 @@ AUTO_APPROVE: Final = "auto_approve"
 HUMAN_REVIEW: Final = "human_review"
 ROUTE_OPTIONS: Final = (AUTO_APPROVE, HUMAN_REVIEW)
 
+DETERMINISTIC_PRECONDITIONS: Final = ("provenance_check_passed", "denied_tools")
+"""State fields the gate checks **in code** before an auto-approve can count, and which no question
+names. Each is a boolean or a list already in the state: code can check it exactly, and asking a
+model to re-derive it would only add a way to get it wrong. The gate (B5) requires provenance to
+have passed and no tool to have been denied before it reads the decider at all."""
+
 QUESTIONS: Final[dict[str, dict[str, Any]]] = {
     ROUTE: {
         "type": "choice",
@@ -40,12 +49,12 @@ QUESTIONS: Final[dict[str, dict[str, Any]]] = {
         ),
         "criteria": {
             AUTO_APPROVE: (
-                "Routine and unambiguous: `provenance_check_passed` is true, `denied_tools` is "
-                "empty, and nothing in `proposed_actions` needs judgement to approve."
+                "Routine and unambiguous: every item in `proposed_actions` is one a careful "
+                "reviewer would approve without needing to look at it first."
             ),
             HUMAN_REVIEW: (
-                "Anything missing, inconsistent or unusual in the state, or any proposed action a "
-                "careful reviewer would want to look at before it runs."
+                "Any item in `proposed_actions` that is unusual, ambiguous, or one a careful "
+                "reviewer would want to look at before it runs."
             ),
         },
     },
