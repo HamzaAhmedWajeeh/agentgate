@@ -5,7 +5,7 @@ written down somewhere better:
 
 | Looking for | Read |
 | --- | --- |
-| Where something claimed one thing and did another | `docs/adr/0004-provider-abstraction-and-lanes.md` — the leak inventory, 19 rows |
+| Where something claimed one thing and did another | `docs/adr/0004-provider-abstraction-and-lanes.md` — the leak inventory; rows 1–20 and 22–26 on `main`, row 21 arrives with PR #18 |
 | Whether a concept is built | `docs/concept-map.md` — three statuses, all enforced by `tests/unit/test_concept_map.py` |
 | What changed and why | `CHANGELOG.md` |
 | Why a design is the way it is | `docs/adr/` |
@@ -32,11 +32,17 @@ Non-negotiable, and the reason each exists is in the inventory somewhere.
   a coupling nobody can see.
 - **Stop and ask rather than guess at a design decision.** Small commits, conventional messages,
   one branch per unit of work, cut from `main`.
+- **Wait for every check before merging.** The repo has no branch protection, so `gh pr merge`
+  succeeds while checks are still running. "Merge #N" never means "before CI is green".
+- **When a branch, a PR or a premise is not what was described, say so and ask** — do not act on
+  your own judgement of whether it matters. A branch described as merged that carries an unmerged
+  commit is reported, not deleted.
 
 ## The failure mode this repo keeps finding
 
 **A component correct in isolation, tested in isolation, and connected to nothing.** Items 13, 15,
-16, 17 and 19 are all that shape. The policy router chose lanes correctly for four phases while
+16, 17, 19 and 24 are all that shape — 24 was the headline claim: the human gate approved a draft
+while no action existed for it to approve. The policy router chose lanes correctly for four phases while
 nothing applied the choice. `build_resilient_model` retries correctly today and no node calls it.
 Item 19 was a row that said *closed*, named the class that closed it, and that class was on no
 path until the run ledger wired it.
@@ -68,8 +74,9 @@ asserts its absence; ADR 0004 item 17 has the full record.
   sensitivity. A sovereign embedding endpoint composes with this later, behind the same rule.
 
 **`most_contained_lane` is the single rule for "which lane is most contained".** Classification
-and retrieval both read it, and Part B will be its third caller. Do not write a second answer to
-that question — two homes for one policy eventually give two answers.
+and retrieval both read it. Do not write a second answer to that question — two homes for one
+policy eventually give two answers. (The decider does not read it: it follows the *routed* lane,
+because it runs only on requests the router sent to the cloud.)
 
 ## Every run has a ledger
 
@@ -78,25 +85,42 @@ run's spend ledger. Model-calling nodes refuse to run without it, and any new mo
 decider's included -- is charged to it. A node reading its config takes a required
 `config: RunnableConfig`: the optional-union spelling is silently not injected (item 22).
 
-## Part B: the next step is B1
+## Part B: complete through B8, in PR #18 — not merged
 
-A decider in front of the approval gate. Jev is TypeSafe AI's decision model — typed questions in,
-typed answers with probabilities out. **Not a chat model**, so do not give it a chat interface.
+The Jev decider in front of the approval gate: configuration and startup validation, offline
+isolation, the decider itself, the `assess` node before the gate, the deployment examples in `env/`,
+and ADR 0012. **It is on `feat/jev-decider` (PR #18), open and unmerged at Hamza's instruction.**
+ADR 0012 is the record of every design decision; read it rather than a summary here.
 
-- `build_decider()`, its own abstraction. Not a lane behind `build_model`.
-- **A cloud egress**, so it runs only when the routed lane is cloud. A sovereign-routed request
-  never calls it and always goes to a human.
-- Its own `assess` node **before** the gate, never inside it — the gate re-executes from its top on
-  resume, so a call there would run twice and could disagree with itself.
-- It can only **auto-approve or ask a human**, never reject. Every error path — timeout, HTTP error,
-  parse failure, missing verdict, low confidence, restricted lane — resolves to a human.
-- **Shadow mode by default.** The threshold comes from measured shadow-mode agreement, not chosen.
-- Budgets, caps and spend stay deterministic code. The decider decides nothing numeric.
-- Startup validation rejects the contradictory combinations (backend on with no key; a decider on a
-  deployment with no cloud lane; enforce mode with an implausible threshold).
-- No SDK and no third-party free-key mirrors.
-- **B1 is next**: verify the request and response schema against docs.typesafe.ai before
-  writing any code. Do not build against a guessed schema.
+### Not done, and each needs Hamza's say-so
+
+- **No live Jev probe has run.** Every Jev capability row is `STUB`. `scripts/probe_capabilities.py
+  jev` makes one billed call and refuses to run against anything but the official endpoint.
+- **No enforce-mode threshold has been measured.** Thresholds must come from measured shadow-mode
+  agreement, and none exists. Enforce mode is refused at startup without all three, so the
+  decider can only run in shadow mode today.
+- **Calibration is not claimed**, and cannot be from a single probe.
+
+### Open decision, recorded as undecided
+
+**Commit `a795e1f` on `feat/jev-decider` is not green in a clean checkout.** The `.gitignore` rule
+`env/`, there for virtualenvs, also excluded the new `env/sovereign.env` and `env/hybrid.env`, so
+that commit carries their test without the files; the next commit tracks them and narrows the rule
+to `!/env/`. The tip and CI are green. Hamza's leaning is to leave it, because rewriting pushed
+history costs more than the inconsistency — **but it is not decided.** Do not rewrite it, and do not
+treat it as settled either.
+
+## What comes next, in order
+
+1. **Item 15: wire `build_resilient_model`.** Retries and fallbacks exist, are tested, and nothing
+   calls them. The constraint: **a fallback must never cross to a less contained lane.** Every call
+   it makes is a model call, so it is charged to the run ledger like any other.
+2. **Item 16: the routed tier.** `bind_lane` binds a tier and no channel carries it. It needs a
+   `tier` state channel, which is a checkpoint-compatibility decision — ask before choosing.
+3. **Then Phases 6 → 7 → 9 → 8:** store-backed memory and time travel; the FastAPI/SSE surface (which
+   is also where the session ceiling gets a caller); evals; observability.
+
+Nothing on this list starts without Hamza's go-ahead.
 
 ## Two local facts
 
