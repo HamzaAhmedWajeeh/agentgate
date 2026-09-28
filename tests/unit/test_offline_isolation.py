@@ -21,6 +21,17 @@ from agentgate.config import Settings, TracingBackend, get_settings
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
 
+# Every variable TypeSafe's official SDKs read on their own, from the Python SDK's
+# `typesafe_sdk.constants` and the JavaScript SDK's `ENV`, both read 2026-09-28. The key is a
+# credential for a cloud egress; the base URL and default model decide where a call goes and what
+# answers it -- `TYPESAFE_DEFAULT_MODEL` defaults to the `jev-latest` alias this project refuses.
+TYPESAFE_SDK_VARIABLES = (
+    "TYPESAFE_API_KEY",
+    "TYPESAFE_BASE_URL",
+    "TYPESAFE_DEFAULT_MODEL",
+    "TYPESAFE_LOG_LEVEL",
+)
+
 # Exactly the variables a real machine is likely to have set.
 LEAK_VECTORS = [
     "LANGSMITH_API_KEY",
@@ -35,6 +46,7 @@ LEAK_VECTORS = [
     "OTEL_SDK_DISABLED",
     "OPENAI_API_KEY",
     "AGENTGATE_LANE",
+    *TYPESAFE_SDK_VARIABLES,
 ]
 
 
@@ -99,3 +111,32 @@ def test_the_prefix_list_is_not_silently_empty() -> None:
     """A refactor that emptied this tuple would make every test above pass vacuously."""
     assert TRACING_PREFIXES
     assert all(prefix for prefix in TRACING_PREFIXES)
+
+
+class TestTypeSafeVariablesExportedBeforeIsolation:
+    """The named case: a machine with TypeSafe configured, and the fixture shown to undo it.
+
+    ``test_the_fixture_actually_removed_them`` passes on any machine that never set the variable,
+    which is most of them, so on its own it proves nothing about these. Here every SDK variable is
+    exported *before* ``isolated_env`` runs -- an autouse fixture runs first within its scope --
+    and the test body sees what survived.
+    """
+
+    exported: tuple[str, ...] = ()
+
+    @pytest.fixture(autouse=True)
+    def typesafe_configured_on_this_machine(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in (*TYPESAFE_SDK_VARIABLES, "TYPESAFE_ANY_FUTURE_SETTING"):
+            monkeypatch.setenv(name, "set-by-the-developer-shell")
+        type(self).exported = (*TYPESAFE_SDK_VARIABLES, "TYPESAFE_ANY_FUTURE_SETTING")
+
+    def test_no_typesafe_variable_survives_into_a_test(self) -> None:
+        # Presence: the export ran, so the absence below is about variables that were there.
+        assert self.exported, "the exporting fixture did not run, so this proves nothing"
+        survivors = [name for name in self.exported if name in os.environ]
+        assert survivors == [], f"survived isolated_env: {survivors}"
+
+    def test_a_key_left_in_place_would_have_been_read(self) -> None:
+        """Why it matters here and not only for the SDK: ``TYPESAFE_API_KEY`` is a declared alias
+        of ``jev_api_key``, so a surviving key configures the decider in every test."""
+        assert get_settings().jev_api_key is None

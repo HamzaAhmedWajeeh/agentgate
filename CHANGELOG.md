@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recommending that spelling; pinned in `test_toolchain_blind_spots.py`. 23: native structured
   output let the client parse inside the call, so a billed reply that failed to validate reported no
   usage -- five requests at the stub, four in the book.
+- The offline suite strips every `TYPESAFE_*` variable, which covers the four TypeSafe's SDKs
+  read on their own -- key, base URL, default model, log level -- and any a later release adds.
+  `TYPESAFE_API_KEY` is also a declared alias of the decider key, so a developer with TypeSafe
+  configured would otherwise have handed every test a live decider key. Named case in
+  `test_offline_isolation.py`: the variables are exported before isolation runs, and none
+  survives.
 - ADR 0004 item 21: a settings field with a validation alias cannot be set by its own name. The
   keyword is matched against the aliases and silently dropped, so `Settings(jev_api_key="x")`
   gives `None`; `openai_api_key=` works only because its alias spells the field name. Pinned as

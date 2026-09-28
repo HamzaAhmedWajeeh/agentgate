@@ -37,17 +37,6 @@ SOVEREIGN = "sovereign-test"
 JEV = "jev-9.9.9"
 
 
-@pytest.fixture(autouse=True)
-def no_typesafe_key_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``TYPESAFE_API_KEY`` is a declared input, so a developer's own key would be read.
-
-    ``isolated_env`` does not strip it yet -- that is B3, with its own named case. Until then
-    these tests clear it themselves, or "no key is an error" would pass or fail depending on
-    whose machine ran it.
-    """
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
-
-
 def prices(*models: str) -> dict[str, dict[str, float]]:
     return {model: {"input": 0.10, "output": 0.40} for model in models}
 
