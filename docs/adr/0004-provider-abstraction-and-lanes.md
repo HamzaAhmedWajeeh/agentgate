@@ -269,7 +269,8 @@ live suite now enforces it. The gap closed the way every gap here is meant to: b
 | **Decided 2026-09-28** | **Build and query the index on the most contained lane the deployment can reach** -- `Settings.most_contained_lane`, the rule classification already uses, rather than a second answer to "which lane is most contained" that could drift from the first. `build_embeddings` dispatches on it instead of `settings.lane`. No new setting. One index, no routing inside retrieval: a hybrid deployment indexes the corpus and embeds every research query in process, public requests included, and nothing from either reaches the third party. The options it was chosen from are kept below. |
 | **Why this one** | It is the only option that makes the guarantee unconditional on a hybrid deployment rather than a property of the route, and it needs nothing that has not been run. **Per-lane indexes were ruled out:** with no sovereign embedding endpoint the sovereign index would be built by the hashing embedder, so retrieval quality would correlate exactly with sensitivity -- restricted requests getting the weaker search -- which is worse than the leak. A sovereign embedding endpoint composes with this decision later, as a better contained embedder behind the same rule. |
 | **What it costs** | **Retrieval quality on every request, not just restricted ones.** A public request drafted by the cloud lane now searches a bag-of-words index. Measured below: **90% top-4 against a 20% chance floor**, 4 of 5 synonym-only questions, and one miss that shares no content word with its answer. That figure belongs to *this* 20-chunk corpus at **301 distinct terms**. ADR 0010's collision curve is why it does not travel: a hashing index degrades as vocabulary grows, so a corpus an order of magnitude larger needs re-measuring before the same conclusion can be drawn. |
-| **Item 19** | Sidestepped on every deployment this closes: a hybrid deployment has no cloud embedding spend left to account. **Not sidestepped on a cloud-only one**, which still embeds on the cloud and still accounts that spend to nothing. |
+| **Re-measured 2026-09-28** | After the run ledger changed the cloud embedder to `AccountedEmbeddings` on the raw client. **The hashing figure is unchanged: 90% top-4, 4 of 5 synonym-only.** What moved is the control and the timings -- the stub baseline went from 10% to 30% because the stub hashes what it is sent and the client now sends strings rather than token ids, and the build times now overlap in both directions (0.006-0.017 s against 0.010-0.017 s). Neither bears on the decision, which rested on the hit rate. The measurement table below has both dates. |
+| **Item 19** | Sidestepped on every deployment this closes: a hybrid deployment has no cloud embedding spend left to account. **Not sidestepped on a cloud-only one**, which still embeds on the cloud -- and until the run ledger (2026-09-28) accounted that spend to nothing. It is now billed to the run that made it; item 19 is closed. |
 | **Not closed** | **A cloud-only deployment.** Its most contained lane is the cloud, so the corpus and every public sub-question are embedded there -- the same shape as item 14, a property of having one lane rather than a defect in code, and pinned the same way, by a passing assertion. Restricted content does not reach it: a cloud-only deployment refuses a restricted request before research, which is item 13's refusal. |
 | **Evidence** | `test_routed_lane_enforcement.py::test_a_restricted_research_query_never_reaches_the_cloud_embedding_endpoint` is the inversion: no canary in any embedding request the cloud endpoint received, decoded through `decode_embedding_input`, paired with a presence assertion -- the run's findings must come from corpus files -- so it cannot pass against a run that never embedded. `::test_the_corpus_is_not_indexed_through_the_cloud_endpoint_either` holds the indexing half. `::test_a_hybrid_deployment_embeds_public_research_in_process_too` pins the cost: a public request routed to the cloud still searches the contained index. `::test_a_cloud_only_deployment_embeds_on_the_cloud_lane_as_documented_egress` holds what stays open. `tests/unit/test_embeddings.py` pairs the dispatch with its control, so returning the hashing embedder unconditionally fails too. |
 | **Recorded** | Here, in `retrieval/embeddings.py`'s module docstring, in `config.py:most_contained_lane`, in the concept map, and in the README's claim about egress. |
@@ -393,26 +394,44 @@ through on a ceiling, and did in the test written to make it. Kept as written, a
 
 ### What has now been measured
 
-`scripts/measure_retrieval.py`, run 2026-09-27 against the committed 20-chunk corpus, with the
-questions and expected chunks committed in `scripts/retrieval_questions.json`:
+`scripts/measure_retrieval.py`, **re-run 2026-09-28 on `main` at `38522da`**, against the
+committed 20-chunk corpus, with the questions and expected chunks committed in
+`scripts/retrieval_questions.json`. Seven runs; build time is the median of three builds within each
+run, and the range across runs is given because the range is the finding.
 
-| | `HashingEmbeddings` | `OpenAIEmbeddings` -> stub |
+| | `HashingEmbeddings` | `AccountedEmbeddings` -> stub |
 | --- | --- | --- |
-| index build, median of 3 | **0.013 s** | **0.020 s** |
+| index build, median of 3, range over 7 runs | **0.010 - 0.017 s** | **0.006 - 0.017 s** |
 | embedding calls for 20 chunks | 0 | **1** (one batch) |
-| top-4 hit rate, 10 questions | **90%** (9/10) | 10% -- see below |
-| shared-vocabulary questions | 5/5 | 0/5 |
-| synonym-only questions | 4/5 | 1/5 |
+| top-4 hit rate, 10 questions | **90%** (9/10), every run | 30% -- see below |
+| shared-vocabulary questions | 5/5 | 3/5 |
+| synonym-only questions | 4/5 | 0/5 |
 
-**Build cost does not distinguish the options.** One batched call and seven milliseconds against a
-loopback stub. A real endpoint adds a round trip, so treat 0.020 s as a floor -- but the shape is
-clear: at this corpus size, indexing twice costs nothing worth deciding on.
+**Why the second column moved, and why that is not a different comparison.** The first version of
+this table, run 2026-09-27, measured `OpenAIEmbeddings` against the stub: 0.020 s to build, 10% hit
+rate, 0/5 and 1/5. The run ledger then made the cloud embedder `AccountedEmbeddings` over the raw
+OpenAI client, which is what production runs, so that is what this column now times. Two things
+changed with it. The stub hashes whatever representation of the text it is sent, and the old client
+sent token ids where the new one sends strings -- so the meaningless embedder became a *different*
+meaningless embedder, and 10% and 30% are two draws from the same kind of control, both consistent
+with a 20% floor on ten questions. And the old client tokenised client-side before sending, which
+the new one does not. The comparison is the same one: hashing, against a deliberately meaningless
+embedder, against chance. The hashing column did not change at all.
+
+**Build cost still does not distinguish the options -- more plainly than before.** One batched call
+and single-digit milliseconds either way against a loopback stub, and the two ranges overlap: the
+provider path was faster in most runs and not in all of them, so the ordering is not stable at this
+size. The first version read 0.013 s against 0.020 s and the provider path slower; both orderings
+are noise at this scale. A real endpoint adds a round trip, so treat the provider figure as a floor
+-- but at this corpus size, indexing either way costs nothing worth deciding on. **The decision on
+item 17 never rested on this line**: it rested on the hit rate, which reproduced exactly.
 
 **The hit rate does.** 90% against a **20% chance floor** (top-4 of 20), and 4 of the 5
 synonym-only questions were found -- including "can a customer still get their money back after six
 weeks", which shares one content word with its answer. The stub column is a deliberately
-meaningless embedder and scored 10%, which is what makes the 90% readable: if a hash of the input
-had scored well, the questions would be answerable by anything.
+meaningless embedder and scored 30% (10% on 2026-09-27, as a different meaningless embedder), which
+is what makes the 90% readable: if a hash of the input had scored well, the questions would be
+answerable by anything.
 
 **The one miss is the honest limit.** *"What is the deadline for the write-up after something goes
 wrong?"* has zero content words in common with the section it should find, and term frequency over

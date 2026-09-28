@@ -215,6 +215,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The retrieval measurement described an embedder that was no longer on `main`.** ADR 0004's table
+  and `measure_retrieval.py`'s label still named `OpenAIEmbeddings` after the run ledger made the
+  cloud embedder `AccountedEmbeddings` on the raw client -- on the row that justified closing item 17.
+  Re-measured 2026-09-28: hashing unchanged at 90% top-4; the meaningless stub baseline moved from 10%
+  to 30%, because it hashes what it is sent and the client now sends strings rather than token ids;
+  build times now overlap in both directions. Row 17 says what moved and why. The decision rested on
+  the hit rate, which reproduced exactly.
 - **Embedding spend is accounted** (ADR 0004 items 9 and 19, closed): `build_embeddings` constructs
   `AccountedEmbeddings`, billed per call to the run that is embedding, because the corpus index
   outlives any one run. A research branch no longer swallows a crossed ceiling into a failed outcome.
