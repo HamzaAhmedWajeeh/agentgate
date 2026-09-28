@@ -17,19 +17,21 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 from tests.doubles.openai_compatible import StubBehaviour, StubServer, running_stub
 
 from agentgate.config import CallClass, Settings, Tier
-from agentgate.graph.build import build_graph, checkpointer_for, run_config
+from agentgate.graph.build import build_checkpointer, build_graph, checkpointer_for, run_config
 from agentgate.graph.state import AgentState, initial_state
 from agentgate.guardrails.run_ledger import accounted
 from agentgate.guardrails.spend import Ceilings, SpendCeilingExceededError, SpendLedger
@@ -368,3 +370,129 @@ def test_the_run_ledger_stops_that_loop_at_the_spend_ceiling_first() -> None:
             )
 
         assert 0 < stub.behaviour.request_count < _LIMIT
+
+
+# -------------------------------------- update_state against a paused interrupt, item 26
+
+
+class _Paused(TypedDict, total=False):
+    value: str
+    verdict: str
+    acted: bool
+
+
+def _paused_graph(ran: list[str]) -> Any:
+    """draft -> gate (interrupt) -> act, with a *static* edge out of the gate."""
+
+    def draft(_state: _Paused) -> _Paused:
+        return {"value": "drafted"}
+
+    def gate(state: _Paused) -> _Paused:
+        verdict = interrupt({"shown": state.get("value")})
+        return {"verdict": str(verdict)}
+
+    def act(_state: _Paused) -> _Paused:
+        ran.append("act")
+        return {"acted": True}
+
+    graph = StateGraph(_Paused)
+    graph.add_node("draft", draft)
+    graph.add_node("gate", gate)
+    graph.add_node("act", act)
+    graph.add_edge(START, "draft")
+    graph.add_edge("draft", "gate")
+    graph.add_edge("gate", "act")
+    graph.add_edge("act", END)
+    return graph.compile(checkpointer=InMemorySaver())
+
+
+def test_a_state_update_written_as_the_paused_node_walks_past_its_interrupt() -> None:
+    """Leak inventory item 26. ``update_state(..., as_node=<the node paused in interrupt()>)``
+    is treated as that node having finished: the pause disappears, the resume value is discarded,
+    and the static successor runs **without the human's decision** -- no error, no warning."""
+    ran: list[str] = []
+    graph = _paused_graph(ran)
+    config = {"configurable": {"thread_id": "walk-past"}}
+    graph.invoke({}, config)
+    assert graph.get_state(config).interrupts, "precondition: paused at the gate"
+
+    graph.update_state(config, {"value": "changed"}, as_node="gate")
+    result = graph.invoke(Command(resume="approved"), config)
+
+    assert ran == ["act"], "the step past the gate ran"
+    assert result.get("verdict") is None, "the human's decision never arrived"
+
+
+def test_without_the_update_the_same_resume_delivers_the_decision() -> None:
+    """The control: the identical graph and resume, with no update, behave as a gate should."""
+    ran: list[str] = []
+    graph = _paused_graph(ran)
+    config = {"configurable": {"thread_id": "control"}}
+    graph.invoke({}, config)
+
+    result = graph.invoke(Command(resume="approved"), config)
+
+    assert result["verdict"] == "approved"
+    assert ran == ["act"]
+
+
+def _paused_agentgate_run(tmp_path: Path) -> tuple[Any, dict[str, Any], str]:
+    """The project graph, paused at the approval gate. Returns the graph, config and shown hash."""
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        outbox_path=tmp_path / "outbox.jsonl",
+        corpus_path=Path(__file__).resolve().parents[2] / "corpus",
+    )
+    graph = build_graph(settings, build_checkpointer(settings))
+    config = run_config(settings, "item-26")
+    state = initial_state("A request.", "item-26")
+    state["sub_questions"] = ["refund escalation"]
+    graph.invoke(state, config)
+    assert graph.get_state(config).next == ("approval_gate",), "precondition: paused at the gate"
+    shown = dict(graph.get_state(config).interrupts[0].value)["proposals_digest"]
+    return graph, config, shown
+
+
+def test_in_agentgate_an_approval_written_as_the_gate_ends_the_run_and_reaches_nothing(
+    tmp_path: Path,
+) -> None:
+    """Why the project graph survives item 26: the approval gate leaves only by ``Command``, with
+    no static edge to ``execute``. An approval written *as the gate* therefore leaves no next node:
+    the run ends, and the resume after it is silently a no-op -- nothing executes, nothing errors.
+    Adding a static edge out of the gate turns this red, which is the point of pinning it."""
+    graph, config, _ = _paused_agentgate_run(tmp_path)
+
+    graph.update_state(config, {"decision": "approved"}, as_node="approval_gate")
+    after = graph.get_state(config)
+    result = graph.invoke(Command(resume={"decision": "approved"}), config)
+
+    assert after.next == (), "the update ended the run"
+    assert not after.interrupts, "and dropped the pause with it"
+    assert not [e for e in result["audit_trail"] if e["decided"] == "executed"]
+    assert not (tmp_path / "outbox.jsonl").exists()
+
+
+def test_in_agentgate_an_unnamed_update_re_enters_the_gate_and_a_stale_approval_is_refused(
+    tmp_path: Path,
+) -> None:
+    """With no node named, the write is credited to the last writer before the pause. Since the
+    assess node (B5) that is ``assess``, whose static edge leads *into* the gate -- so the run does
+    not end: the gate runs again over the changed state, and the pending resume is applied to that
+    fresh pass. What keeps that safe is the approval hash: an approval carrying the hash of what was
+    shown -- as the CLI's always does -- no longer matches, and is refused rather than run.
+
+    Before the assess node, the same update ended the run (the last writer was the supervisor,
+    which routes by ``Command``). The behaviour moved with the topology; the guarantee did not."""
+    graph, config, shown = _paused_agentgate_run(tmp_path)
+    refund = {"tool": "issue_refund", "arguments": {"account": "4929", "amount_units": 240.0}}
+
+    graph.update_state(config, {"proposed_actions": [refund]})
+    after = graph.get_state(config)
+    result = graph.invoke(
+        Command(resume={"decision": "approved", "approved_digest": shown}), config
+    )
+
+    assert after.next == ("approval_gate",), "the update routes back into the gate"
+    assert [e for e in result["audit_trail"] if e["decided"] == "approval_refused"]
+    assert not [e for e in result["audit_trail"] if e["decided"] == "executed"]
+    assert not (tmp_path / "outbox.jsonl").exists()
