@@ -149,6 +149,9 @@ Things this build surfaced that were not on the original list, kept because each
 | [0007](adr/0007-configuration-validated-at-startup.md) | Validation at startup, not at import |
 | [0008](adr/0008-tracing-backend-is-a-deployment-decision.md) | OpenTelemetry as instrumentation; backend as deployment choice |
 | [0009](adr/0009-env-is-a-shared-namespace.md) | `.env` is read, not owned |
+| [0010](adr/0010-dense-in-process-retrieval-by-default.md) | Dense in-process retrieval by default |
+| [0011](adr/0011-checkpoints-are-a-durable-format.md) | A checkpoint is a durable format, so state channels hold data |
+| [0012](adr/0012-the-decider-is-a-declared-egress.md) | The decider is a declared egress that can only ask for a human |
 
 Pending: 0001 (LangGraph over a custom loop), 0002 (supervisor over swarm),
 0003 (checkpointer selection), 0005 (interrupt placement and idempotency).

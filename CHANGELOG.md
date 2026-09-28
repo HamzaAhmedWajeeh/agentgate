@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variable -- including the effect sink and outbox path. Secrets are left blank and model identifiers
   are placeholders; a test holds each file to the settings model and loads it once its secrets are
   supplied. The hybrid example runs Jev in shadow mode with no threshold set.
+- ADR 0012, the decider: a declared egress on the cloud lane only, that can approve or ask a human but
+  never reject, shadow by default with thresholds that must come from measured agreement (none
+  exists), preconditions checked in code before any verdict, the assess node separate from the gate,
+  no SDK, and the injection limitation stated plainly -- structured facts narrow the surface and do
+  not close it, because a proposal's arguments are model-authored.
 - **The decider in front of the approval gate** (Part B, B5). An `assess` node, between the
   supervisor and the gate, asks the decider once per draft -- only on a cloud-routed request, and
   charged to the run ledger -- and stores its verdict as JSON. It is sent structured facts: the
