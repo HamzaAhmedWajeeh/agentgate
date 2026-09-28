@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ADR 0004 item 25: `create_agent`'s structured output turns a model that does not comply into a
+  paid retry loop -- 8 billed requests at a recursion limit of 8, from the fake and from the stub with
+  native structured output on and off, and no error until the limit. Pinned in
+  `test_toolchain_blind_spots.py`, with the run ledger shown stopping it at the spend ceiling first.
+  Not used: item 24's proposals are parsed from the drafter's final message instead.
 - **One run ledger reaching every model call in the graph.** `run_config` creates it per run and
   carries it in the config; classification, the drafter's whole `create_agent` loop and the
   embeddings behind retrieval are charged to it, and the token and dollar ceilings are checked after

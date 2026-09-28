@@ -364,6 +364,17 @@ that provokes it, not to add a defensive branch.
 | **Recorded** | Here, in the README, in the concept map, and in `graph/nodes/execute.py`'s own comment, which has said so since Phase 5. |
 | **Closed by** | Nothing yet. The fix is structured proposals from the drafter, executed only past the gate by an executor holding the `EXECUTOR` allowlist -- an architecture change, proposed before it is built. |
 
+### 25. `create_agent`'s structured output turns a model that does not comply into a paid retry loop
+
+| | |
+| --- | --- |
+| **Difference** | `create_agent(response_format=...)`, as installed, gets structured output by having the model call a synthetic response tool. A model that answers with the right JSON *as text* never calls it -- and nothing treats that as an error. The agent re-prompts, each turn a request the provider bills, until LangGraph's recursion limit stops it. Non-compliance is not a refusal; it is a loop with a meter running. |
+| **How established** | Probing the mechanism proposed for closing item 24, before building on it. The fake model scripted with the correct JSON, and the OpenAI-compatible stub answering correctly with native structured output on and off: **8 requests at a recursion limit of 8**, every time, and no error until the limit. |
+| **Evidence** | `tests/integration/test_toolchain_blind_spots.py::test_structured_output_the_fake_cannot_satisfy_loops_to_the_recursion_limit` and `::test_every_turn_of_that_loop_is_a_billed_request` (native on and off), asserting the current truth. `::test_the_run_ledger_stops_that_loop_at_the_spend_ceiling_first`: with the model charged to a run ledger the loop ends at the ceiling, as a refusal naming what was spent, before the recursion limit. |
+| **Consequence** | Not used. Item 24's proposals come from the drafter's final message as JSON, parsed by this code on the same lane-aware path classification uses, and a parse failure fails closed -- no proposals, the drop audited -- rather than being retried at the provider's expense. It also avoids depending on tool calling, which item 12 lists as never measured on any lane. And it is the run ledger earning its place a second time: under it, this loop is a visible refusal at the spend ceiling rather than a silent runaway that only a recursion limit -- a backstop, not a budget -- would end. Same family as items 15 and 22: a toolchain behaviour that is not an error, found by running it. |
+| **Recorded** | Here and in the test. Version-specific: re-check on a `langchain` upgrade. |
+| **Closed by** | Nothing to close in this code; the mechanism is avoided, and the pin makes a change in it visible. |
+
 ## Closing item 17: the index is the hard part
 
 **Decided 2026-09-28: index on the contained lane.** Item 17 above records the decision, what it

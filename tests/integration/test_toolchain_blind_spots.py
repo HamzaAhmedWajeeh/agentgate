@@ -20,13 +20,21 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
+from tests.doubles.openai_compatible import StubBehaviour, StubServer, running_stub
 
-from agentgate.config import Settings
+from agentgate.config import CallClass, Settings, Tier
 from agentgate.graph.build import build_graph, checkpointer_for, run_config
 from agentgate.graph.state import AgentState, initial_state
+from agentgate.guardrails.run_ledger import accounted
+from agentgate.guardrails.spend import Ceilings, SpendCeilingExceededError, SpendLedger
 from agentgate.models.fake import FakeChatModel, scripted_json
+from agentgate.models.registry import build_model
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
 
@@ -274,3 +282,89 @@ def test_a_config_typed_as_an_optional_union_is_silently_not_injected() -> None:
 def test_a_required_config_is_injected() -> None:
     """The control, and the spelling every node here uses."""
     assert _config_seen_by(_required) == ["present"]
+
+
+# -------------------- create_agent structured output: non-compliance is a paid loop, item 25
+
+
+class _Proposal(BaseModel):
+    tool: str
+    arguments: dict[str, Any]
+
+
+class _DraftWithProposals(BaseModel):
+    draft: str
+    proposed_actions: list[_Proposal] = Field(default_factory=list)
+
+
+_PAYLOAD = {
+    "draft": "A draft.",
+    "proposed_actions": [{"tool": "issue_refund", "arguments": {"account": "1", "amount": 2}}],
+}
+_LIMIT = 8
+
+
+def _structured_agent(model: Any) -> Any:
+    return create_agent(model, tools=[], system_prompt="x", response_format=_DraftWithProposals)
+
+
+def _stub_model(stub: StubServer) -> Any:
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        lane="cloud",
+        openai_api_key="not-required",
+        openai_base_url=stub.base_url,
+        cloud_capable_model="capable",
+        cloud_cheap_model="cheap",
+        model_prices_usd_per_million={
+            "capable": {"input": 1.0, "output": 4.0},
+            "cheap": {"input": 0.1, "output": 0.4},
+        },
+    )
+    return settings, build_model(settings, Tier.CAPABLE, CallClass.SYNTHESIS)
+
+
+def test_structured_output_the_fake_cannot_satisfy_loops_to_the_recursion_limit() -> None:
+    """Leak inventory item 25. ``create_agent(response_format=...)`` gets structured output by
+    having the model call a synthetic response tool. A model that answers with the right JSON as
+    text -- which is what the fake is scripted to do -- never calls it, and nothing treats that as
+    an error: the agent re-prompts until LangGraph's recursion limit stops it."""
+    agent = _structured_agent(FakeChatModel(responses=[scripted_json(_PAYLOAD)]))
+
+    with pytest.raises(GraphRecursionError):
+        agent.invoke({"messages": [HumanMessage("hi")]}, {"recursion_limit": _LIMIT})
+
+
+@pytest.mark.parametrize("native", [True, False])
+def test_every_turn_of_that_loop_is_a_billed_request(native: bool) -> None:
+    """The same loop against the OpenAI-compatible stub, with and without native structured output
+    -- the stub answers correctly either way and never calls the response tool. Each turn is a
+    request the provider would bill; only the recursion limit ends it."""
+    with running_stub(
+        StubBehaviour(reply=_PAYLOAD, supports_native_structured_output=native)
+    ) as stub:
+        _, model = _stub_model(stub)
+
+        with pytest.raises(GraphRecursionError):
+            _structured_agent(model).invoke(
+                {"messages": [HumanMessage("hi")]}, {"recursion_limit": _LIMIT}
+            )
+
+        assert stub.behaviour.request_count == _LIMIT
+
+
+def test_the_run_ledger_stops_that_loop_at_the_spend_ceiling_first() -> None:
+    """With the model charged to a run ledger, the loop ends at the ceiling -- a refusal naming
+    what was spent -- well before the recursion limit, and before the provider sees the rest of
+    it. The ledger turning a silent runaway into a visible refusal, a second time."""
+    with running_stub(StubBehaviour(reply=_PAYLOAD)) as stub:
+        settings, model = _stub_model(stub)
+        tight = settings.model_copy(update={"max_total_tokens": 200})
+        ledger = SpendLedger(tight, Ceilings.for_run(tight))
+
+        with pytest.raises(SpendCeilingExceededError):
+            _structured_agent(accounted(model, ledger)).invoke(
+                {"messages": [HumanMessage("hi")]}, {"recursion_limit": 100}
+            )
+
+        assert 0 < stub.behaviour.request_count < _LIMIT
