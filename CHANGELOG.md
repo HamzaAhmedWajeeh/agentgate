@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recommending that spelling; pinned in `test_toolchain_blind_spots.py`. 23: native structured
   output let the client parse inside the call, so a billed reply that failed to validate reported no
   usage -- five requests at the stub, four in the book.
+- ADR 0004 item 21: a settings field with a validation alias cannot be set by its own name. The
+  keyword is matched against the aliases and silently dropped, so `Settings(jev_api_key="x")`
+  gives `None`; `openai_api_key=` works only because its alias spells the field name. Pinned as
+  the current truth over every aliased field, so fields added later are covered automatically.
 - Decider configuration, validated at startup: `AGENTGATE_DECIDER_BACKEND` (`none` | `jev` | `llm`,
   default `none`), `AGENTGATE_DECIDER_MODE` (`shadow` | `enforce`, default `shadow`), the Jev base
   URL, key and model, and three auto-approve thresholds -- route probability, route confidence and

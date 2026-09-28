@@ -379,6 +379,16 @@ that provokes it, not to add a defensive branch.
 | **Consequence** | Not used. Item 24's proposals come from the drafter's final message as JSON, parsed by this code on the same lane-aware path classification uses, and a parse failure fails closed -- no proposals, the drop audited -- rather than being retried at the provider's expense. It also avoids depending on tool calling, which item 12 lists as never measured on any lane. And it is the run ledger earning its place a second time: under it, this loop is a visible refusal at the spend ceiling rather than a silent runaway that only a recursion limit -- a backstop, not a budget -- would end. Same family as items 15 and 22: a toolchain behaviour that is not an error, found by running it. |
 | **Recorded** | Here and in the test. Version-specific: re-check on a `langchain` upgrade. |
 | **Closed by** | Nothing to close in this code; the mechanism is avoided, and the pin makes a change in it visible. |
+### 21. An aliased field cannot be set by its own name, and the keyword is dropped without a word
+
+| | |
+| --- | --- |
+| **Difference** | A field with a validation alias cannot be set in-process by its field name. Under `case_sensitive=False` a constructor keyword is matched against the field's aliases, never the name, and `extra="ignore"` discards one that matches nothing. So `Settings(jev_api_key="x")` constructs cleanly and the key is `None`. `openai_api_key=` works only because its unprefixed alias `OPENAI_API_KEY` happens to spell the field name, and so do both LangSmith fields -- which is why the trap stayed hidden: every existing aliased field was a coincidence. |
+| **How established** | Two of the B2 decider-configuration tests passed against a settings model that did not have the fields yet. The keyword was accepted, dropped, and the assertions -- one about a valid shape, one about a key's absence from `repr` -- held for a model that knew nothing about them. Caught because the other 32 went red and those two did not. |
+| **Evidence** | `tests/unit/test_env_namespace.py::test_an_aliased_field_cannot_be_set_by_its_own_name`, parametrised over every aliased field whose aliases do not spell its name, so a field added later is covered without anyone adding it. Its control, `::test_a_field_whose_alias_spells_its_name_works_only_by_coincidence`, pins the three that do. Mutation-checked: `populate_by_name=True` turns the `jev_api_key` case red. |
+| **Consequence** | The same shape as item 5, which is this failure for the environment -- an unknown variable dropped rather than rejected -- and not for in-process construction, which nothing guarded. **A landmine for every aliased field from here, B4's included:** a test that sets one by name tests nothing. Tests pass the key under its declared name (`test_decider_config.py:KEY` says why). Not fixed with `populate_by_name`: that would make the field name an input too, and a construction path that accepts names the environment does not is a second answer to "what does this field read". |
+| **Recorded** | Here, and in `tests/unit/test_decider_config.py`. |
+| **Closed by** | Nothing. Pinned as the current truth, so any change to it is a visible inversion. |
 
 ## Closing item 17: the index is the hard part
 
