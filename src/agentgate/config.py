@@ -204,7 +204,13 @@ class DeciderBackend(StrEnum):
     """TypeSafe's decision model: typed questions in, calibrated probabilities out."""
 
     LLM = "llm"
-    """The cloud chat lane asked the same questions. No calibrated confidence."""
+    """The cloud chat lane asked the route question. No probabilities and no confidence, so in
+    enforce mode it can never meet the auto-approve thresholds: it fails closed by construction."""
+
+    FAKE = "fake"
+    """Deterministic and in process, for the offline suite. Returns what it was scripted to.
+    Subject to the same no-cloud-lane rule as the others: the decider runs only on a cloud-routed
+    request, so a fake decider on a deployment with no cloud lane would never run either."""
 
 
 class DeciderMode(StrEnum):

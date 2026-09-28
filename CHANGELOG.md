@@ -38,6 +38,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recommending that spelling; pinned in `test_toolchain_blind_spots.py`. 23: native structured
   output let the client parse inside the call, so a billed reply that failed to validate reported no
   usage -- five requests at the stub, four in the book.
+- The decider, `decider/`, with three backends behind `build_decider`: `jev` (TypeSafe's
+  `POST /v1/systemone` over plain `httpx`, no SDK), `llm` (the cloud chat lane asked the route
+  question) and `fake` (deterministic, and unscripted it asks a human). Every outcome is an
+  `Assessment`, and every failure -- a timeout, 401, 422, a second 429 or 5xx, a non-JSON body, a
+  missing field, a missing usage block, or a response from a model other than the pinned one --
+  is an assessment with no route, which asks a human. At most one retry, on 429 or 5xx, honouring
+  `retry-after` up to five seconds. Usage is recorded against the pinned model before the answer
+  is judged, and a crossed spend ceiling aborts rather than becoming a human review. Confidence is
+  the reported field, never recomputed. The `llm` backend reports a route and nothing numeric, so
+  it can never meet the enforce-mode thresholds. **Built, not wired:** nothing calls
+  `build_decider` until the assess node exists, so no request is assessed today.
+- `usage_of` reads a raw usage block as well as a chat reply, and refuses a partial one: on an API
+  that charges for input only, a block without `input_tokens` is an unmeasured call, not a free one.
+- A TypeSafe stub in `tests/doubles/`, shaped from the published API reference, with a request log
+  of path, headers and body, and every documented failure status: 422, 429 and 529, plus 500.
+- `DECIDER_CAPABILITY_MATRIX`, every Jev row `STUB` until a live probe runs, and
+  `scripts/probe_capabilities.py jev`, which makes one call and emits `LIVE_PROBE` rows -- and
+  refuses to run against anything but the official endpoint, so a stub cannot be recorded as the
+  real thing.
 - The offline suite strips every `TYPESAFE_*` variable, which covers the four TypeSafe's SDKs
   read on their own -- key, base URL, default model, log level -- and any a later release adds.
   `TYPESAFE_API_KEY` is also a declared alias of the decider key, so a developer with TypeSafe

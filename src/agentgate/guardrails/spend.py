@@ -67,13 +67,22 @@ class Usage:
         )
 
 
-def usage_of(reply: AIMessage) -> Usage:
-    """Extract usage from a reply.
+def usage_of(reply: AIMessage | Mapping[str, Any] | None) -> Usage:
+    """Extract usage from a reply: a chat model's ``AIMessage``, or the raw ``usage`` block an
+    API that is not a chat model returned -- TypeSafe's, for the decider.
+
+    The raw block is held to a stricter rule than the chat path, because nothing sits between it
+    and the wire: both counts must be present and integers. A block with ``output_tokens`` and no
+    ``input_tokens`` is not a free call on an API that charges for input only -- it is an
+    unmeasured one.
 
     Raises:
-        MissingUsageError: if the reply reports nothing. Treated as a failure rather than as
-            zero, because a silent zero disarms every ceiling built on top of it.
+        MissingUsageError: if the reply reports nothing, or a raw block is partial. Treated as a
+            failure rather than as zero, because a silent zero disarms every ceiling built on top
+            of it.
     """
+    if not isinstance(reply, AIMessage):
+        return _usage_of_block(reply)
     metadata = reply.usage_metadata
     if not metadata:
         msg = (
@@ -85,6 +94,25 @@ def usage_of(reply: AIMessage) -> Usage:
         input_tokens=int(metadata.get("input_tokens", 0)),
         output_tokens=int(metadata.get("output_tokens", 0)),
     )
+
+
+def _usage_of_block(block: Mapping[str, Any] | None) -> Usage:
+    counts: dict[str, int] = {}
+    absent: list[str] = []
+    for name in ("input_tokens", "output_tokens"):
+        value = (block or {}).get(name)
+        # bool is an int subclass, and `True` tokens is not a measurement.
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            absent.append(name)
+        else:
+            counts[name] = value
+    if absent:
+        msg = (
+            f"usage block is missing {', '.join(absent)} (got {block!r}), so the call's cost "
+            "cannot be accounted for; refusing to treat an unmeasured call as free"
+        )
+        raise MissingUsageError(msg)
+    return Usage(input_tokens=counts["input_tokens"], output_tokens=counts["output_tokens"])
 
 
 @dataclass(frozen=True)
