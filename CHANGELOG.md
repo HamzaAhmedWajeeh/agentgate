@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keyword is matched against the aliases and silently dropped, so `Settings(jev_api_key="x")`
   gives `None`; `openai_api_key=` works only because its alias spells the field name. Pinned as
   the current truth over every aliased field, so fields added later are covered automatically.
+- `.env.example` records the Jev price beside its pinned version as a dated comment: $0.042 per
+  million input tokens, output free, read 2026-09-28.
 - Decider configuration, validated at startup: `AGENTGATE_DECIDER_BACKEND` (`none` | `jev` | `llm`,
   default `none`), `AGENTGATE_DECIDER_MODE` (`shadow` | `enforce`, default `shadow`), the Jev base
   URL, key and model, and three auto-approve thresholds -- route probability, route confidence and
