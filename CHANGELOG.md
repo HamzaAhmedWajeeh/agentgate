@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The decider in front of the approval gate** (Part B, B5). An `assess` node, between the
+  supervisor and the gate, asks the decider once per draft -- only on a cloud-routed request, and
+  charged to the run ledger -- and stores its verdict as JSON. It is sent structured facts: the
+  routed lane, the finding count, the denied tools, the provenance result and the proposed actions;
+  never the draft. The gate checks the deterministic preconditions (provenance passed, no denied
+  tool) in code before it reads the verdict at all, and approves in a human's place only in enforce
+  mode, when the assessed proposals still hash to what is in state and every threshold holds.
+  Everything else -- shadow mode, a restricted route, any decider failure, any unmet condition -- is
+  a human, and the approval event records who approved alongside the whole stored verdict, so shadow
+  agreement can be measured from the trail. A skipped assessment overwrites any earlier verdict.
 - **Actions past the gate** (ADR 0004 item 24, closed). The drafter's final message is a JSON
   object -- the draft and proposed actions, each a tool name and arguments -- parsed strictly by
   this code and failing closed. Proposals the executor could not run are dropped before the gate and

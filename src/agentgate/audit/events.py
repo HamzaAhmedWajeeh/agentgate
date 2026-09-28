@@ -44,6 +44,7 @@ class Decided(StrEnum):
     BUDGET_EXCEEDED = "budget_exceeded"
     FINALISED = "finalised"
     FINALISED_INCOMPLETE = "finalised_incomplete"
+    ASSESSED = "assessed"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVED = "approved"
     APPROVAL_REFUSED = "approval_refused"
