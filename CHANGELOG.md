@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One run ledger reaching every model call in the graph.** `run_config` creates it per run and
+  carries it in the config; classification, the drafter's whole `create_agent` loop and the
+  embeddings behind retrieval are charged to it, and the token and dollar ceilings are checked after
+  every call, so a crossing stops the run at that call. Model-calling nodes refuse to run without a
+  ledger. The spend so far is written to a `spend` state channel at every supervisor turn, and
+  `resume_config` starts a resumed run's ledger from it -- so an approval in another process does not
+  reset the ceiling. The CLI reports what the run spent, and a crossed ceiling exits 2 with the
+  message and no traceback. What the ceilings do not bound is in the README: the session ceiling,
+  calls outside the graph, and spend lost to a crash between a call and the next turn.
+- ADR 0004 items 22 and 23, both found by the ledger. 22: under `from __future__ import annotations`
+  LangGraph silently does not inject a node's `config` typed `RunnableConfig | None`, and warns
+  recommending that spelling; pinned in `test_toolchain_blind_spots.py`. 23: native structured
+  output let the client parse inside the call, so a billed reply that failed to validate reported no
+  usage -- five requests at the stub, four in the book.
 - `src/` layout, packaged with hatchling, exposing a typed `agentgate` distribution.
 - Pinned dependency set: LangGraph 1.2.10 and LangChain 1.3.14 for orchestration, both SQLite
   and Postgres checkpointers, FastAPI and Typer surfaces, and the structlog / OpenTelemetry /
@@ -201,6 +215,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Embedding spend is accounted** (ADR 0004 items 9 and 19, closed): `build_embeddings` constructs
+  `AccountedEmbeddings`, billed per call to the run that is embedding, because the corpus index
+  outlives any one run. A research branch no longer swallows a crossed ceiling into a failed outcome.
+- **Streamed calls report their usage** (item 18, closed): `stream_usage=True` on every
+  OpenAI-compatible client. Without it, accounting would have refused every networked CLI call.
+- **A native structured-output reply that fails to parse is still accounted** (item 23): the schema
+  is bound as a plain dict and the reply parsed strictly by this code, not inside the client.
+- `make seed` said an embed was billed by the configured lane; it now asks the lane embeddings
+  actually use, which on a hybrid deployment is in process and free.
 - **Retrieval embeds on the most contained lane the deployment can reach**, so on a hybrid
   deployment neither a restricted request's research queries nor the corpus reach the third party.
   `build_embeddings` reads `most_contained_lane` -- the rule classification already uses -- instead
@@ -277,6 +300,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Nodes that call a model or record spend take a required `config: RunnableConfig`, and a test
+  that calls one directly passes a run's config (item 22 is why it is required rather than optional).
+- The fake model records the tools bound to it in place, so a shallow copy -- which is how a model is
+  charged to a ledger -- shares the record.
 - `Settings.classification_lane` is renamed `most_contained_lane`. Classification runs on it and
   retrieval now embeds on it, so a name for one caller was already wrong. No behaviour change.
 - `SpendLedger` requires the ceilings it enforces rather than reading the run ceilings off

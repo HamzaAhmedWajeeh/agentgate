@@ -24,7 +24,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from agentgate.config import CallClass, Lane, Settings
-from agentgate.graph.build import build_graph
+from agentgate.graph.build import build_graph, run_config
 from agentgate.graph.completeness import research_gaps
 from agentgate.graph.state import (
     Decision,
@@ -72,10 +72,7 @@ def model_factory(_s: Settings, _t: object, call_class: CallClass, **_k: object)
 def completed_run(settings: Settings) -> dict[str, Any]:
     """A run driven all the way through the gate, so every channel has been written."""
     graph = build_graph(settings, InMemorySaver(), model_factory=model_factory)
-    config = {
-        "configurable": {"thread_id": str(uuid.uuid4())},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, str(uuid.uuid4()))
     state = initial_state("Draft a refund response.", str(uuid.uuid4()))
     state["sub_questions"] = ["refund escalation", "retention period"]
     graph.invoke(state, config)

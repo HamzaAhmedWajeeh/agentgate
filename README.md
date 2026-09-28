@@ -70,20 +70,25 @@ structlog/OpenTelemetry/Prometheus instrumentation, and the eval suite. `docs/co
 lists every concept and marks each one built or not built; a row there describes the repository
 as it is today.
 
-**Built but not yet wired.** The spend ledger enforces run and session ceilings, and nothing in
-the graph accounts against it -- not the chat calls, and not the embedding path either. Until
-something does, the run and session ceilings bound what `make measure` derives, not what a run
-actually spends.
+**The run ceiling bounds chat and embedding spend, for every model call the graph makes.** One
+ledger per run reaches classification, the drafter's whole tool loop, and the embeddings behind
+retrieval -- index build and queries alike -- and checks the token and dollar ceilings after every
+call. A crossing stops the run at that call; the command line reports it and exits 2. The spend so
+far is written to state at every turn, so a run resumed in another process -- every approval is one
+-- starts from what it had already spent rather than from zero. A call that reports no usage is
+refused rather than counted as free. Pinned on the wire: the requests each stub received are the
+calls in the ledger, and the ceiling trips mid-run at each of the three call sites. ADR 0004 items 9,
+18 and 19, closed.
 
-**Embedding spend is not accounted, and the row saying it was has been corrected.** Item 9 of
-that inventory recorded the gap as closed by `AccountedEmbeddings`. Nothing constructs it, so
-embedding spend is still invisible to every ceiling. Reopened as item 19. Until item 20 this
-README also said the opposite, three paragraphs earlier: that embedding spend went through the
-ledger and chat spend was the half left to wire.
+What the ceilings do **not** bound:
 
-**Streamed calls report no token usage.** `langchain-openai` does not ask for it and the CLI is
-the only surface that streams, so every model call made through the command line is unmeasured.
-Latent while chat spend is unwired; item 18.
+- **The session ceiling is not wired.** It bounds many runs in one process, and nothing here runs
+  more than one: the CLI is a process per command. It belongs to the API surface, which is not
+  built.
+- **Calls outside the graph** -- `make seed`, `make measure-retrieval`, the capability probe --
+  account into ledgers of their own, and no ceiling spans them and a run.
+- **A crash after a model call and before the next supervisor turn** loses that call's spend from
+  the persisted total, so a run resumed from such a checkpoint starts slightly low.
 
 **There are no retries and no fallbacks on any lane.** `build_resilient_model` composes both and
 is tested against a server returning real HTTP errors, and nothing in `src/` calls it. That is
@@ -101,8 +106,8 @@ with separate request logs, in a run as far as the approval gate. The chat calls
 classifier's, which runs on the most contained lane, and the drafter's, which runs on the lane the
 router chose (ADR 0004 items 14 and 13). Retrieval indexes the corpus and embeds every research
 query on the most contained lane -- in process, on a hybrid deployment -- so the cloud endpoint
-receives no embedding request at all, checked against the token ids the client actually sends
-rather than the raw body (item 17). Nothing broader is claimed:
+receives no embedding request at all, checked against the text decoded from whatever form the
+client sends -- token ids or strings -- rather than a grep of the raw body (item 17). Nothing broader is claimed:
 
 - **A cloud-only deployment** has nowhere more contained to go. It classifies on the cloud, and it
   indexes the corpus and embeds public sub-questions there. It refuses a restricted request
@@ -113,9 +118,8 @@ rather than the raw body (item 17). Nothing broader is claimed:
   distinct terms, and not beyond it. A corpus an order of magnitude larger has to be re-measured.
 - **Past the approval gate is not pinned.** A rejected draft is revised on the same routed lane,
   and no wire test follows it there.
-- **Still open**: no retries or fallbacks on any lane (item 15), the routed tier is not applied
-  (item 16), streamed calls report no usage (item 18), and embedding spend is accounted by nothing
-  on the one deployment that still has any (item 19).
+- **Still open**: no retries or fallbacks on any lane (item 15), and the routed tier is not
+  applied (item 16).
 
 **Classification runs on the most contained lane available, which on a cloud-only deployment is
 the cloud.** The raw request is shown to the third party in order to decide whether it was
@@ -126,10 +130,12 @@ lane is not claimed: a classifier that cannot produce a verdict fails closed to 
 the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
 
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — twenty entries, each
-established by running something or by checking a claim against what calls it. Two of them are
-corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed* and
-was not, and item 20 corrects this README, which said embedding spend was accounted. It says
+an inventory of every place something claimed one thing and did another — twenty-three entries,
+each established by running something or by checking a claim against what calls it. Two of them
+are corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed*
+and was not, and item 20 corrects this README, which said embedding spend was accounted. The last
+two were found by the run ledger itself, the first time anything counted requests against the book.
+It says
 plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
 exercised. It is the most honest document here.
 

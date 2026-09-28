@@ -21,7 +21,7 @@ from typing import Final
 from langchain_core.messages import AIMessage
 
 from agentgate.config import CallClass, Lane, Settings, Tier
-from agentgate.graph.build import build_checkpointer, build_graph
+from agentgate.graph.build import build_checkpointer, build_graph, run_config
 from agentgate.graph.state import initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
 
@@ -156,13 +156,7 @@ def measure(settings: Settings, label: str, request: str, sub_questions: list[st
     graph = build_graph(settings, build_checkpointer(settings), model_factory=recording_factory)
     state = initial_state(request, str(uuid.uuid4()))
     state["sub_questions"] = sub_questions
-    graph.invoke(
-        state,
-        {
-            "configurable": {"thread_id": str(uuid.uuid4())},
-            "recursion_limit": settings.recursion_limit,
-        },
-    )
+    graph.invoke(state, run_config(settings, str(uuid.uuid4())))
 
     usage = [message.usage_metadata for message in seen if message.usage_metadata]
     return Measured(

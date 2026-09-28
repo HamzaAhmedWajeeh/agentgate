@@ -154,7 +154,7 @@ request logs rather than any value the graph produced.
 | **Consequence** | `Ceilings` is a required argument to `SpendLedger`, so a ledger has to say what it is accounting. The suite's ceiling has its own basis — the gatekeeper's estimate times the tolerance, the same bound as the dollar abort in the other unit — and `make test-live` now prints estimated against actual tokens as well as dollars, so the figure the ceiling rests on is observed rather than assumed. `AGENTGATE_LIVE_SPEND_ABORT_USD` tightens it, which is the first time that value has been enforced during a suite rather than reported after one. |
 | **Recorded** | `.env.example`, next to the run ceilings it is deliberately not part of. The failure mode worth naming: charged against the wrong ceiling, the suite aborts for being a suite, and the obvious remedy is to raise the run ceiling — weakening the guard that was working. |
 
-### 9. Embedding spend was invisible to every ceiling — REOPENED, see item 19
+### 9. Embedding spend was invisible to every ceiling — CLOSED, via item 19
 
 | | |
 | --- | --- |
@@ -165,6 +165,7 @@ request logs rather than any value the graph produced.
 | **Recorded** | Here and in `.env.example`. **Closed 2026-08-10.** |
 | **Decided** | **The run budget means all spend, not chat spend.** A gate that claims to cap spend and means "some spend" is misdescribed, and the specific reason it mattered here is that embedding cost scales with fan-out width — the one quantity a model chooses rather than the system. The unaccounted path was exactly the path with model-controlled multiplication in it. The alternative on the table was to declare the corpus index a build-time cost outside the run budget; rejected because querying is not indexing, every research branch embeds its sub-question at run time, and a budget with a carve-out is a budget someone has to remember. |
 | **Reopened 2026-09-27** | **This row was wrong.** `AccountedEmbeddings` books nothing, because nothing constructs it -- `build_embeddings` returns a plain `OpenAIEmbeddings`, and embedding spend is still invisible to every ceiling. The decision below stands; the implementation is not on any path. See item 19, which is where the correction is recorded rather than hidden by an edit. The one part that was true: the price guard does include the embedding model, so an unpriced embedder still refuses to start. |
+| **Closed 2026-09-28, for real** | `build_embeddings` now constructs `AccountedEmbeddings` on the cloud lane, billed to the run that is embedding and checked against its ceiling after every batch. Item 19 records how. |
 | **Claimed by** | `retrieval/accounting.py:AccountedEmbeddings` books every embedding call into the ledger on the same three rules as a chat call: a response with no usage is an error rather than a zero, an unpriced embedding model refuses to start (`config.py:_every_reachable_model_has_a_price` now includes it), and spend is recorded per model so the summary names `text-embedding-3-small` rather than "embeddings". `check()` runs after every batch, so a runaway index trips the ceiling while it is running rather than reporting the bill afterwards. Pinned by `tests/unit/test_embedding_accounting.py`. |
 
 ### 10. A checkpoint notice that no configuration can turn into an error, and a flag that makes it worse
@@ -196,7 +197,7 @@ some tokens on a fallback rather than a provider exception in a node that cannot
 | Gap | What would close it |
 | --- | --- |
 | Tool calling, on any lane | Tools exist as of Phase 4 and the drafter binds them, but no live case has watched a real provider emit a tool call. A live case would change the suite's cost estimate and therefore its ceiling, so it lands with the next measured live run. |
-| Embeddings, on the cloud lane | Reached only by a cloud-only deployment since item 17 closed. Wired, **not accounted** (item 19), and never called against a real provider. The usage field `AccountedEmbeddings` would read (item 11) has only been exercised against a double. This cell said *accounted* until item 20. The offline lane embeds in-process, so nothing in CI touches this path — see item 9 for the ceiling consequence. |
+| Embeddings, on the cloud lane | Reached only by a cloud-only deployment since item 17 closed. Wired and accounted since item 19 closed, and never called against a real provider. The usage field `AccountedEmbeddings` would read (item 11) has only been exercised against a double. This cell said *accounted* until item 20. The offline lane embeds in-process, so nothing in CI touches this path — see item 9 for the ceiling consequence. |
 | Streaming, on any lane | Phase 7, when the SSE surface exists. |
 | Ollama and vLLM behaviour | Neither has been run against. The stub stands in for the shape, not for a specific server. |
 
@@ -276,7 +277,7 @@ live suite now enforces it. The gap closed the way every gap here is meant to: b
 
 **The guard this row could not have while it was open.** The canary helper was widened to read decoded embedding texts, which makes every absence assertion in that file cover retrieval egress. While the leak was live, the leak itself exercised the widening. Once closed, no hybrid run embeds on the cloud, so narrowing the helper back to the chat log would pass every absence assertion -- and would keep passing if the leak came back. `::test_the_canary_helper_reads_the_embedding_log` now holds it directly: one embedding request and no chat call, so the helper can only see the marker through the embedding log.
 
-### 18. A streamed call reports no usage, and the CLI is the only thing that streams
+### 18. A streamed call reports no usage, and the CLI is the only thing that streams — CLOSED
 
 | | |
 | --- | --- |
@@ -286,9 +287,11 @@ live suite now enforces it. The gap closed the way every gap here is meant to: b
 | **Consequence** | Latent, and it is worth being precise about why. Chat calls are not wired to the spend ledger (README, and item 19 below), so nothing currently reads the number. It stops being latent the moment they are: `usage_of` refuses to treat an unmeasured call as free, and on this path there would be nothing to refuse, because the field is simply absent. Same shape as item 11 -- **a client is a convenience over a protocol, and what it declines to send is invisible until something depends on it.** Third instance now. |
 | **Also** | The first version of that test asserted the property of both stubs, and `all()` over an empty list is `True`: on a restricted request the cloud endpoint receives no streamed calls at all, so half the assertion was passing by looking at nothing. Caught by the other half failing. |
 | **Recorded** | Here and in `tests/doubles/openai_compatible.py`. |
-| **Closed by** | Nothing. The fix belongs with wiring chat spend into the ledger, not here. |
+| **Closed 2026-09-28** | With the run ledger, exactly as predicted: once chat spend was accounted, an unfixed item 18 would have stopped every networked CLI run at its first model call, because the ledger refuses a call that reports nothing. `stream_usage=True` on every OpenAI-compatible client. The pinning test is inverted -- `test_cli.py::test_every_streamed_call_asks_for_its_usage_block` requires `include_usage` on every streamed request and the run to complete -- and removing the setting turns the CLI tests red. |
+| **Unverified** | The sovereign lane receives the same `stream_options`. Whether Ollama and vLLM honour it is unknown, like everything else about them; one that ignores it will be refused by the ledger rather than billed at zero. |
+| **Closed by** | `feat(spend): wire one run ledger through every model call in the graph`. |
 
-### 19. `AccountedEmbeddings` is not wired, so item 9 is not closed
+### 19. `AccountedEmbeddings` is not wired, so item 9 is not closed — CLOSED
 
 | | |
 | --- | --- |
@@ -297,7 +300,9 @@ live suite now enforces it. The gap closed the way every gap here is meant to: b
 | **Evidence** | `tests/integration/test_routed_lane_enforcement.py::test_no_embedding_call_is_accounted_for_anywhere` asserts that the embedder the index builds is `OpenAIEmbeddings`, so wiring the accounted one turns it red. On a cloud-only deployment since item 17 closed, because that is the only one left with cloud embedding spend. `docs/concept-map.md` carries the row as **built, not wired**, which is enforced in both directions. |
 | **Consequence** | The half of item 9 that *is* true is the price guard: `_every_reachable_model_has_a_price` does include the embedding model, so an unpriced embedder still refuses to start. Everything about accounting is not. Item 9's **Closed by** row is corrected rather than deleted, because the correction is the interesting part -- and the general rule it produces is the same one as item 15: **a class with thorough unit tests and no caller is evidence about the class.** Second instance in this inventory, found six weeks apart, both by asking "what actually calls this". |
 | **Recorded** | Here, in the corrected item 9, and in the concept map. |
-| **Closed by** | Nothing. Wiring it changes when ceilings trip during an index build, and it interacts with the item 17 options below, so it is a decision rather than a patch. |
+| **Closed 2026-09-28** | Wired in the same change that gave the graph a run ledger, because a ledger that saw chat spend and not embeddings would be item 20 restated -- a ceiling that looks like it is working. `build_embeddings` constructs `AccountedEmbeddings` on the cloud lane. The corpus index outlives any one run, so the embedder cannot hold a run's ledger; it resolves one per call from the charge the research branch sets (`guardrails/run_ledger.py:charging`), and the index build is billed to the run that caused it. As predicted, an index build can now fail partway through on a ceiling. The research branch catches its own failures, and would have swallowed that one into a failed outcome the drafter then wrote up -- so budget errors now pass through it. |
+| **Evidence, now** | `test_routed_lane_enforcement.py::test_every_embedding_call_is_accounted_in_the_run_ledger` -- the inversion -- reads the run's spend record against the tokens the stub reported for the texts it was sent. `test_run_ledger.py::test_the_ceiling_trips_inside_retrieval_and_is_not_swallowed` holds the pass-through. Mutation-checked: removing the charge, or the pass-through, turns them red. |
+| **Closed by** | `feat(spend): wire one run ledger through every model call in the graph`. |
 
 Two of the seven rows above were closed when they were found and five were recorded and left open,
 which is the honest ratio for a session spent asking one question. Item 17 has since closed for
@@ -321,7 +326,30 @@ that provokes it, not to add a defensive branch.
 | **Consequence** | The rule item 19 produced -- **a class with no caller is evidence about the class** -- applies to sentences as well. A correction recorded beside a claim rather than in place of it leaves both standing, and a reader who stops at the first one leaves with the wrong answer. Every hit is now corrected in place. |
 | **Not guarded** | Nothing enforces prose. The enforced record is `docs/concept-map.md`, where `AccountedEmbeddings` is **built, not wired** and a test holds it there; a sentence elsewhere that contradicts that row is found only by reading. A phrase-matching test over the README was considered and not written: it would pass the moment the wording changed, which is the vacuous guard this repository keeps finding. |
 | **Recorded** | Here, and in the corrected README, item 12, `accounting.py` and the changelog. |
-| **Closed by** | `docs: correct the claim that embedding spend is accounted` -- the correction, not the wiring. Items 18 and 19 remain open. |
+| **Closed by** | `docs: correct the claim that embedding spend is accounted` -- the correction, not the wiring. |
+| **Since** | The wiring, 2026-09-28: chat and embedding spend both reach one run ledger now, and the README says which spend the ceilings bound and which they do not. |
+
+### 22. A node's `config` typed as an optional union is silently not injected
+
+| | |
+| --- | --- |
+| **Difference** | LangGraph passes a node its `RunnableConfig` only if it recognises the parameter's annotation. Under `from __future__ import annotations` -- every module here -- `config: RunnableConfig \| None = None` is the string `"RunnableConfig \| None"`, which it does not recognise. So it passes **nothing**, and says so only in a `UserWarning` whose text recommends that exact spelling. `RunnableConfig` and `Optional[RunnableConfig]` both work. |
+| **How established** | The run ledger travels in the config, and the nodes that read it fail closed. The first run after wiring stopped at classification with "this run has no spend ledger" while `run_config` had plainly supplied one. A probe of three spellings under string annotations found the one that is dropped. |
+| **Evidence** | `tests/integration/test_toolchain_blind_spots.py::test_a_config_typed_as_an_optional_union_is_silently_not_injected`, asserting the current truth, with `::test_a_required_config_is_injected` as its control. |
+| **Consequence** | Every node that reads its config takes a required `config: RunnableConfig`, which also means a node exercised directly in a test has to be handed a run's config -- the ledger rule, applied to unit tests. The general point is item 3's: **a toolchain can drop something without failing, and a component that fails closed is what finds it.** A node that read an optional setting from its config would have run on without it. |
+| **Recorded** | Here and in the test. Version-specific: re-check on a `langgraph` upgrade. |
+| **Closed by** | Nothing to close in this code. Pinned so an upgrade that fixes or changes it is a visible inversion. |
+
+### 23. Native structured output threw away the usage of a billed call whose reply did not parse
+
+| | |
+| --- | --- |
+| **Difference** | `with_structured_output` hands the OpenAI client a pydantic class, and the client parses **inside the model call**. A reply that does not validate raises before the call returns, so a request that reached the provider, and was billed, arrives at the ledger's callback as an error with no usage. The classifier takes the native path on the cloud lane (it is recorded as native) and falls back to repair when it fails, so a misbehaving reply cost a call nothing counted. |
+| **How established** | The run ledger's first wire test counted five requests at the stub and four in the book. The stub answers native requests in prose, as a misbehaving model would; the native attempt was the missing one. |
+| **Evidence** | `tests/integration/test_run_ledger.py::test_a_native_structured_call_that_fails_to_parse_is_still_accounted`, and the request-count test that found it. Mutation-checked: restoring `with_structured_output` turns both red. |
+| **Consequence** | The native path binds the schema as a plain JSON-schema dict and parses the reply itself, strictly -- JSON and nothing else, so a lane that does not really do native is still caught and still falls back. `response_format` is still on the wire, which item 14's control depends on. Fourth instance of item 11's shape: **a client is a convenience over a protocol, and what it declines to hand back is invisible until something depends on it.** |
+| **Recorded** | Here and in `models/structured.py:invoke_structured`. |
+| **Closed by** | `feat(spend): wire one run ledger through every model call in the graph`. |
 
 ## Closing item 17: the index is the hard part
 
@@ -359,6 +387,9 @@ by moving the failure into a request rather than into startup.
 Indexing on the contained lane is the only option that sidesteps this, because there is no cloud
 embedding spend left to account -- **on a deployment with a sovereign lane.** A cloud-only
 deployment's contained lane is the cloud, so it still embeds there and item 19 still applies to it.
+
+*Item 19 closed on 2026-09-28, and the prediction above held: an index build can now fail partway
+through on a ceiling, and did in the test written to make it. Kept as written, as the reasoning.*
 
 ### What has now been measured
 

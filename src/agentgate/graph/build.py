@@ -15,7 +15,7 @@ Postgres gives you.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from functools import partial
 from typing import Any, Protocol
 
@@ -43,6 +43,8 @@ from agentgate.graph.subgraphs.retrieval import (
     RetrieverFactory,
     build_retrieval_subgraph,
 )
+from agentgate.guardrails.run_ledger import RUN_LEDGER
+from agentgate.guardrails.spend import Ceilings, SpendLedger
 from agentgate.models.registry import ModelFactory, build_model
 from agentgate.retrieval.index import build_retriever
 
@@ -179,6 +181,39 @@ def _budget_guard(state: AgentState) -> AgentState:  # noqa: ARG001 - name is pa
     in ``route_by_budget``, where it can be read and tested as a pure function.
     """
     return AgentState()
+
+
+def run_config(
+    settings: Settings,
+    thread_id: str,
+    *,
+    spent: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The config one run is invoked with, carrying that run's spend ledger.
+
+    **Every run starts here**, because the model-calling nodes refuse to run without the ledger
+    it carries. One ledger per run: a new one per invocation, starting from ``spent`` when the run
+    has spent already -- which is what :func:`resume_config` passes. The ledger is never
+    checkpointed (only primitives in ``configurable`` reach checkpoint metadata), so the only way
+    its totals outlive a process is the ``spend`` channel the supervisor writes.
+    """
+    ledger = SpendLedger.resumed(settings, Ceilings.for_run(settings), spent)
+    return {
+        "configurable": {"thread_id": thread_id, RUN_LEDGER: ledger},
+        "recursion_limit": settings.recursion_limit,
+    }
+
+
+def resume_config(graph: Any, settings: Settings, thread_id: str) -> dict[str, Any]:
+    """The config for picking a paused run back up, its ledger starting from what it had spent.
+
+    Read off the checkpoint, not carried in memory: the process that resumes a run is usually not
+    the one that started it, and a ledger that restarted from zero on every approval would let a
+    reviewer who kept rejecting drive spend past a ceiling that never saw it.
+    """
+    snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
+    spent = (snapshot.values or {}).get("spend") if snapshot else None
+    return run_config(settings, thread_id, spent=spent)
 
 
 def build_checkpointer(settings: Settings) -> BaseCheckpointSaver[Any]:

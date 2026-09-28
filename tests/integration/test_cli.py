@@ -369,27 +369,20 @@ def test_a_hybrid_deployment_runs_and_reports_the_lane_it_actually_used(
     assert sovereign_stub.behaviour.requests_seen, "the sovereign endpoint was never called"
 
 
-def test_streamed_calls_ask_for_no_usage_block_which_is_recorded_not_accepted(
+def test_every_streamed_call_asks_for_its_usage_block(
     tmp_path: Path, cloud_stub: StubServer, sovereign_stub: StubServer
 ) -> None:
-    """A streamed OpenAI response carries no token counts unless the caller asks for them.
+    """Leak inventory item 18, closed, and this is the test that used to assert it was open.
 
-    `langchain-openai` does not set ``stream_options.include_usage``, and the CLI is the only
-    surface that streams -- so **every model call the command line makes reports no usage at
-    all.** Not an error; an absent number. Same shape as leak inventory item 11, where
-    `OpenAIEmbeddings` dropped the usage block the budget depends on.
+    A streamed OpenAI response carries no token counts unless the caller sets
+    ``stream_options.include_usage``, and the CLI is the only surface that streams. While chat
+    spend went to no ledger the absent number was latent; with every model call accounted, the
+    ledger refuses a call that reported nothing -- so an unfixed item 18 would stop every networked
+    CLI run at its first model call. ``stream_usage=True`` on every OpenAI-compatible client is
+    the fix, and the run completing is the proof it took.
 
-    Latent today, because chat calls are not wired to the spend ledger (see the README). It stops
-    being latent the moment they are: `usage_of` refuses to account for an unmeasured call, and on
-    this path there would be nothing to refuse, because the field simply is not there.
-
-    Recorded as a passing assertion of the current truth, like item 14's documented egress, so
-    that fixing it is a visible inversion of a named test rather than a silent improvement.
-
-    The non-vacuity guard is not decoration here. The first version of this test asserted the
-    property of *both* stubs, and `all()` over an empty list is `True` -- the cloud stub receives
-    no streamed calls at all on a restricted request, because everything is routed to the
-    sovereign lane. Half of it was passing by looking at nothing.
+    The non-vacuity guard stays: ``all()`` over an empty list is ``True``, and on a restricted
+    request the cloud stub receives no streamed calls at all.
     """
     env = networked_environment(
         tmp_path,
@@ -398,20 +391,17 @@ def test_streamed_calls_ask_for_no_usage_block_which_is_recorded_not_accepted(
         AGENTGATE_SOVEREIGN_MODEL=SOVEREIGN_MODEL,
     )
 
-    networked_cli(tmp_path, env, "run", RESTRICTED_REQUEST, "--thread", "usage")
+    result = networked_cli(tmp_path, env, "run", RESTRICTED_REQUEST, "--thread", "usage")
 
+    assert result.returncode == 0, result.stderr
     streamed = sovereign_stub.behaviour.streamed_requests
     assert streamed, (
         "no request arrived with stream=true, so either the CLI stopped streaming or this test "
         "is reading an empty list"
     )
-    assert not sovereign_stub.behaviour.usage_requested_on_every_stream(), (
-        "streamed calls now ask for their usage block; if that is deliberate, this test and the "
-        "leak inventory row are what to rewrite"
-    )
-    assert all("stream_options" not in body for body in streamed), (
-        "stream_options appeared on the wire without include_usage set, which is a third state "
-        "this test does not describe"
+    assert sovereign_stub.behaviour.usage_requested_on_every_stream(), (
+        "a streamed call went out without stream_options.include_usage, so its cost is unmeasured "
+        "and the ledger will refuse it -- ADR 0004 item 18 has reopened"
     )
 
 
@@ -462,3 +452,56 @@ def test_the_endpoint_does_return_usage_when_a_stream_asks_for_it() -> None:
         "usage arrived attached to a choice; OpenAI sends it on a final chunk with none, and a "
         "client reading it off the last choice would find nothing"
     )
+
+
+# ---------------------------------------------------------------------- the run ledger
+
+
+def test_the_report_says_what_the_run_spent(tmp_path: Path) -> None:
+    """Every model call is now accounted, so the operator is told the total, not left to infer
+    it from a bill."""
+    result = start(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "spent     " in result.stdout
+    assert " tokens" in result.stdout
+
+
+def test_a_crossed_ceiling_stops_the_run_readably(tmp_path: Path) -> None:
+    """The ceiling trips at the first model call, and the command line says so: exit 2, a message
+    naming which ceiling and by how much, and no traceback -- the same contract as every other
+    refusal, now reachable by spending too much."""
+    env = {**os.environ, **environment(tmp_path), "AGENTGATE_MAX_TOTAL_TOKENS": "1"}
+
+    result = subprocess.run(
+        [sys.executable, "-m", "agentgate.cli", "run", "Draft a refund note", "--thread", "cap"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+        check=False,
+    )
+
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "over the ceiling of 1" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "drafter" not in result.stdout, "nothing ran after the call that crossed it"
+
+
+def spent_tokens(output: str) -> int:
+    line = next(line for line in output.splitlines() if line.strip().startswith("spent"))
+    return int(line.split()[1])
+
+
+def test_approving_in_a_new_process_reports_the_whole_runs_spend(tmp_path: Path) -> None:
+    """The ledger object dies with `run`'s process. `approve` is another process, and the only
+    thing carried between them is the checkpoint -- so the figure it reports can only include
+    what `run` spent if the new ledger was started from the spend written to state. A ledger
+    started from zero would report less than `run` already had."""
+    first = start(tmp_path)
+    assert first.returncode == 0, first.stderr
+
+    second = cli(tmp_path, "approve", THREAD)
+    assert second.returncode == 0, second.stderr
+
+    assert spent_tokens(second.stdout) >= spent_tokens(first.stdout) > 0

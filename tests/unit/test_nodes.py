@@ -15,6 +15,7 @@ import pytest
 
 from agentgate.audit.events import Decided
 from agentgate.config import CallClass, Lane, Settings, Tier
+from agentgate.graph.build import run_config
 from agentgate.graph.nodes.classify import classify
 from agentgate.graph.nodes.finalise import finalise
 from agentgate.graph.nodes.lanes import LANE_NODES
@@ -30,6 +31,12 @@ from agentgate.graph.state import (
 from agentgate.models.fake import FakeChatModel, scripted_json
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
+
+
+def ran() -> dict[str, object]:
+    """A run's config, carrying its ledger. Nodes that call models, or record what calls cost,
+    refuse to run without one -- so a node exercised directly needs one as much as a graph does."""
+    return run_config(settings_with(), "unit-run")
 
 
 def settings_with(**overrides: object) -> Settings:
@@ -69,7 +76,7 @@ def test_classify_returns_a_validated_verdict() -> None:
         }
     )
 
-    update = classify(state, settings_with(), model_factory=factory_returning(verdict))  # type: ignore[arg-type]
+    update = classify(state, settings_with(), ran(), model_factory=factory_returning(verdict))  # type: ignore[arg-type]
 
     assert update["classification"]["sensitivity"] == Sensitivity.INTERNAL.value
     assert update["audit_trail"][0]["decided"] == Decided.CLASSIFIED.value
@@ -80,7 +87,7 @@ def test_classify_records_the_input_as_a_hash_not_as_content() -> None:
     sensitive_request = "Client Foo owes 12,000 and their contact is jane@example.com"
     state = initial_state(sensitive_request, "run-1")
 
-    update = classify(state, settings_with(), model_factory=factory_returning("not json"))  # type: ignore[arg-type]
+    update = classify(state, settings_with(), ran(), model_factory=factory_returning("not json"))  # type: ignore[arg-type]
 
     rendered = str(update["audit_trail"])
     assert sensitive_request not in rendered
@@ -105,6 +112,7 @@ def test_unparseable_classification_is_treated_as_restricted() -> None:
     update = classify(
         state,
         settings_with(),
+        ran(),
         model_factory=factory_returning("I'm sorry, I can't help with that."),  # type: ignore[arg-type]
     )
 
@@ -115,7 +123,7 @@ def test_unparseable_classification_is_treated_as_restricted() -> None:
 def test_a_failed_classification_routes_to_the_most_restrictive_lane() -> None:
     """The property that actually matters: the verdict is only interesting if routing honours it."""
     state = initial_state("Anything at all.", "run-1")
-    update = classify(state, settings_with(), model_factory=factory_returning("not json"))  # type: ignore[arg-type]
+    update = classify(state, settings_with(), ran(), model_factory=factory_returning("not json"))  # type: ignore[arg-type]
 
     destination = route_by_policy({**state, **update})  # type: ignore[typeddict-item]
 
@@ -130,11 +138,12 @@ def test_a_failure_is_distinguishable_from_a_genuine_restricted_verdict() -> Non
     are, or the classifier could be entirely broken and look merely cautious.
     """
     failed = classify(
-        initial_state("x", "r"), settings_with(), model_factory=factory_returning("not json")
+        initial_state("x", "r"), settings_with(), ran(), model_factory=factory_returning("not json")
     )  # type: ignore[arg-type]
     genuine = classify(
         initial_state("x", "r"),
         settings_with(),
+        ran(),
         model_factory=factory_returning(
             scripted_json(
                 {
@@ -233,14 +242,14 @@ def test_the_lane_event_records_why() -> None:
 
 def test_the_supervisor_advances_the_counter_and_moves_control_together() -> None:
     """One object, so state and control flow cannot disagree about what happened."""
-    command = supervise(initial_state("x", "r"), settings_with())
+    command = supervise(initial_state("x", "r"), settings_with(), ran())
 
     assert command.update["iterations"] == 1
     assert command.goto == "budget_guard"
 
 
 def test_the_supervisor_finishes_when_there_is_nothing_outstanding() -> None:
-    command = supervise(initial_state("x", "r"), settings_with())
+    command = supervise(initial_state("x", "r"), settings_with(), ran())
 
     assert command.update["finalised"] is True
 
@@ -248,7 +257,7 @@ def test_the_supervisor_finishes_when_there_is_nothing_outstanding() -> None:
 def test_the_supervisor_keeps_going_while_work_remains() -> None:
     state = {**initial_state("x", "r"), "sub_questions": ["one", "two"]}
 
-    command = supervise(state, settings_with())  # type: ignore[arg-type]
+    command = supervise(state, settings_with(), ran())  # type: ignore[arg-type]
 
     assert command.update["finalised"] is False
     assert command.update["audit_trail"][0]["detail"]["outstanding"] == 2

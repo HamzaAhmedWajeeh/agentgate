@@ -37,8 +37,10 @@ import typer
 
 from agentgate.config import CheckpointerBackend, Settings, get_settings
 from agentgate.errors import AgentgateError
-from agentgate.graph.build import build_graph, checkpointer_for
+from agentgate.graph.build import build_graph, checkpointer_for, resume_config, run_config
 from agentgate.graph.state import initial_state
+from agentgate.guardrails.run_ledger import ledger_of
+from agentgate.guardrails.spend import SpendLedger
 
 app = typer.Typer(
     name="agentgate",
@@ -164,14 +166,10 @@ def _resume_with(thread_id: str, verdict: dict[str, Any]) -> None:
     from langgraph.types import Command  # noqa: PLC0415 - keeps `--help` fast
 
     settings = get_settings()
-    config = {
-        "configurable": {"thread_id": thread_id},
-        "recursion_limit": settings.recursion_limit,
-    }
 
     with checkpointer_for(settings) as checkpointer:
         graph = build_graph(settings, checkpointer)
-        snapshot = graph.get_state(config)
+        snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
         if not snapshot.created_at:
             _echo(
                 typer.style(
@@ -182,9 +180,12 @@ def _resume_with(thread_id: str, verdict: dict[str, Any]) -> None:
             )
             raise typer.Exit(code=1)
 
+        # Resumed with a ledger that starts from what the run already spent, read off the
+        # checkpoint -- this is a different process from the one that started the run.
+        config = resume_config(graph, settings, thread_id)
         state, interrupts = _stream(graph, Command(resume=verdict), config)
 
-    _report(state, thread_id, interrupts)
+    _report(state, thread_id, interrupts, ledger_of(config))
 
 
 # Events that represent a model call, and therefore an endpoint something was sent to. Read
@@ -208,10 +209,23 @@ def _lanes_used(state: dict[str, Any]) -> str:
     return ", ".join(f"{what} on {lane}" for what, lane in seen.items())
 
 
-def _report(state: dict[str, Any], thread_id: str, interrupts: tuple[Any, ...] = ()) -> None:
+def _spent(ledger: SpendLedger) -> str:
+    """The whole run's spend so far, including what earlier invocations of it spent."""
+    return f"{ledger.total_tokens} tokens, ${ledger.total_usd:.4f}"
+
+
+def _report(
+    state: dict[str, Any],
+    thread_id: str,
+    interrupts: tuple[Any, ...] = (),
+    ledger: SpendLedger | None = None,
+) -> None:
     """Print whatever the run arrived at: another review, or an ending."""
     if interrupts:
         _render_packet(dict(interrupts[0].value), thread_id)
+        if ledger is not None:
+            _echo(f"  spent     {_spent(ledger)}")
+            _echo()
         return
 
     _echo()
@@ -237,6 +251,8 @@ def _report(state: dict[str, Any], thread_id: str, interrupts: tuple[Any, ...] =
             _echo(f"  lanes     {lanes}")
     else:
         _echo(typer.style("  STOPPED without finalising.", fg=typer.colors.RED))
+    if ledger is not None:
+        _echo(f"  spent     {_spent(ledger)}")
     _echo(f"  thread    {thread_id}")
     _echo()
 
@@ -264,10 +280,9 @@ def run(
     _echo()
     _warn_if_ephemeral(settings)
 
-    config = {
-        "configurable": {"thread_id": thread_id},
-        "recursion_limit": settings.recursion_limit,
-    }
+    # One ledger for this run, reaching every model call it makes. A crossed ceiling raises out
+    # of the stream and is reported by `main` like any other refusal: exit 2, no traceback.
+    config = run_config(settings, thread_id)
     state = initial_state(request, thread_id)
     state["sub_questions"] = list(question)
 
@@ -275,7 +290,7 @@ def run(
         graph = build_graph(settings, checkpointer)
         final, interrupts = _stream(graph, state, config)
 
-    _report(final, thread_id, interrupts)
+    _report(final, thread_id, interrupts, ledger_of(config))
 
 
 @app.command()

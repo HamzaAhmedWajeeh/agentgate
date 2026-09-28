@@ -29,7 +29,7 @@ from langgraph.types import Command
 
 from agentgate.audit.writer import REQUIRED_FIELDS
 from agentgate.config import CallClass, Settings
-from agentgate.graph.build import build_graph
+from agentgate.graph.build import build_graph, run_config
 from agentgate.graph.nodes.lanes import LANE_NODES
 from agentgate.graph.state import initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
@@ -86,10 +86,7 @@ def complete_run(
     graph = build_graph(
         settings, InMemorySaver(), model_factory=factory_for(verdict(sensitivity, complexity))
     )
-    config = {
-        "configurable": {"thread_id": str(uuid.uuid4())},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, str(uuid.uuid4()))
     state = initial_state(f"A {sensitivity} request about refunds.", str(uuid.uuid4()))
     state["sub_questions"] = ["refund escalation"]
 
@@ -181,10 +178,7 @@ def test_the_request_appears_only_as_a_hash(tmp_path: Path) -> None:
     settings = settings_with(tmp_path)
     restricted_text = "account 4471 belonging to a named individual"
     graph = build_graph(settings, InMemorySaver(), model_factory=factory_for(verdict("restricted")))
-    config = {
-        "configurable": {"thread_id": str(uuid.uuid4())},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, str(uuid.uuid4()))
     state = initial_state(restricted_text, str(uuid.uuid4()))
     state["sub_questions"] = ["refund escalation"]
     graph.invoke(state, config)

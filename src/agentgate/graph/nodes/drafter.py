@@ -23,12 +23,14 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import CallClass, Settings, Tier, narrower_of
 from agentgate.graph.completeness import research_gaps
 from agentgate.graph.state import AgentState, findings_of, lane_of
 from agentgate.guardrails.output import check_provenance
+from agentgate.guardrails.run_ledger import accounted, ledger_of
 from agentgate.models.registry import ModelFactory, build_model
 from agentgate.tools.allowlist import AllowlistMiddleware
 from agentgate.tools.registry import Agent, tools_for
@@ -68,7 +70,10 @@ def _brief(state: AgentState) -> str:
 
 
 def draft(
-    state: AgentState, settings: Settings, model_factory: ModelFactory = build_model
+    state: AgentState,
+    settings: Settings,
+    config: RunnableConfig,
+    model_factory: ModelFactory = build_model,
 ) -> AgentState:
     """Produce a draft, and record what the agent's tools were allowed to do.
 
@@ -91,7 +96,12 @@ def draft(
     routed = lane_of(state)
     effective = narrower_of(routed, settings.lane)
     model_id = settings.model_for(Tier.CAPABLE, lane=effective)
-    model = model_factory(settings, Tier.CAPABLE, CallClass.SYNTHESIS, lane=routed)
+    # Charged to the run. The agent's model-tool loop is invisible from here -- it may call the
+    # model several times -- and every one of those calls goes through this model and so through
+    # its ledger callback, which checks the ceiling after each.
+    model = accounted(
+        model_factory(settings, Tier.CAPABLE, CallClass.SYNTHESIS, lane=routed), ledger_of(config)
+    )
 
     agent = create_agent(
         model,

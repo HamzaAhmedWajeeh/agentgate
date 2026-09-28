@@ -315,6 +315,13 @@ def _init_openai_compatible(
         # say retries were applied there "in one place", which was true about the design and
         # false about the running system for four phases. Leak inventory item 15.
         max_retries=0,
+        # Ask for the usage block on streamed calls too. Without it a streamed OpenAI response
+        # carries no token counts, and the CLI streams every call -- so with chat spend accounted,
+        # the ledger would refuse every call the command line makes. Leak inventory item 18,
+        # latent until the run ledger made it load-bearing. Sovereign endpoints receive the same
+        # `stream_options`; whether Ollama and vLLM honour it is unverified, like everything else
+        # about them, and one that ignores it will be refused by the ledger rather than billed at 0.
+        stream_usage=True,
     )
 
 

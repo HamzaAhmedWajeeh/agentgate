@@ -20,10 +20,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from agentgate.config import Settings
-from agentgate.graph.build import build_graph, checkpointer_for
+from agentgate.graph.build import build_graph, checkpointer_for, run_config
 from agentgate.graph.state import AgentState, initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
 
@@ -194,8 +195,7 @@ def test_interrupt_before_in_the_invoke_config_is_silently_ignored(tmp_path: Pat
         _env_file=None, checkpointer="sqlite", sqlite_path=tmp_path / "ignored.db"
     )
     config = {
-        "configurable": {"thread_id": "config-time-interrupt"},
-        "recursion_limit": settings.recursion_limit,
+        **run_config(settings, "config-time-interrupt"),
         # Looks like it should pause. Does not.
         "interrupt_before": ["finalise"],
     }
@@ -217,10 +217,7 @@ def test_interrupt_before_at_compile_time_actually_pauses(tmp_path: Path) -> Non
     settings = Settings(  # type: ignore[call-arg]
         _env_file=None, checkpointer="sqlite", sqlite_path=tmp_path / "honoured.db"
     )
-    config = {
-        "configurable": {"thread_id": "compile-time-interrupt"},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, "compile-time-interrupt")
 
     with checkpointer_for(settings) as saver:
         graph = build_graph(
@@ -231,3 +228,49 @@ def test_interrupt_before_at_compile_time_actually_pauses(tmp_path: Path) -> Non
     decided = [event["decided"] for event in result["audit_trail"]]
     assert "finalised" not in decided
     assert "classified" in decided
+
+
+# -------------------------------------------- config injection, and a type hint that loses it
+
+
+def _config_seen_by(node: Any) -> list[object]:
+    """Run a one-node graph and report what its ``config`` parameter received."""
+    seen: list[object] = []
+
+    def wrapped(state: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        seen.append(node(state, **kwargs))
+        return {}
+
+    wrapped.__signature__ = __import__("inspect").signature(node)  # type: ignore[attr-defined]
+    graph = StateGraph(dict[str, Any])
+    graph.add_node("only", wrapped)
+    graph.add_edge(START, "only")
+    graph.add_edge("only", END)
+    graph.compile().invoke({}, {"configurable": {"marker": "present"}})
+    return seen
+
+
+def _optional_union(state: dict[str, Any], config: RunnableConfig | None = None) -> object:
+    return None if config is None else config.get("configurable", {}).get("marker")
+
+
+def _required(state: dict[str, Any], config: RunnableConfig) -> object:
+    return config.get("configurable", {}).get("marker")
+
+
+def test_a_config_typed_as_an_optional_union_is_silently_not_injected() -> None:
+    """Leak inventory item 22. Under ``from __future__ import annotations`` -- which every module
+    here uses -- ``config: RunnableConfig | None`` is a string LangGraph does not recognise, so it
+    passes **no config at all**, and only warns -- with a message recommending that exact spelling.
+
+    Found because the run ledger's nodes fail closed: the ledger travels in the config, a node
+    that did not receive it refused to call a model, and the first run stopped. A node reading
+    anything optional from its config would have run on without it.
+    """
+    with pytest.warns(UserWarning, match="config"):
+        assert _config_seen_by(_optional_union) == [None]
+
+
+def test_a_required_config_is_injected() -> None:
+    """The control, and the spelling every node here uses."""
+    assert _config_seen_by(_required) == ["present"]

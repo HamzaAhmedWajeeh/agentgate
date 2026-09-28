@@ -17,19 +17,23 @@ from __future__ import annotations
 
 from typing import Literal
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
 
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Settings
 from agentgate.graph.routing import budget_exhausted
 from agentgate.graph.state import AgentState, Decision, decision_of
+from agentgate.guardrails.run_ledger import ledger_of
 
 NODE = "supervisor"
 
 Destination = Literal["researcher", "drafter", "approval_gate", "budget_guard"]
 
 
-def supervise(state: AgentState, settings: Settings) -> Command[Destination]:
+def supervise(
+    state: AgentState, settings: Settings, config: RunnableConfig
+) -> Command[Destination]:
     """Advance the run by one turn.
 
     Increments the iteration counter as part of the same update that moves control, so a
@@ -80,6 +84,10 @@ def supervise(state: AgentState, settings: Settings) -> Command[Destination]:
         update={
             "iterations": iterations,
             "finalised": done,
+            # The run's spend so far, written at every turn so it is in the checkpoint before any
+            # pause. Every model-calling node returns here, and the approval gate is only ever
+            # reached from here -- so a resumed process starts its ledger from the real total.
+            "spend": ledger_of(config).as_channel(),
             "audit_trail": [
                 audit_event(
                     node=NODE,

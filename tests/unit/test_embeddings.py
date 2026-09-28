@@ -164,7 +164,8 @@ def test_a_cloud_only_deployment_still_embeds_on_the_cloud() -> None:
     embedder = build_embeddings(settings_with(**CLOUD_WITH_EMBEDDINGS))
 
     assert not isinstance(embedder, HashingEmbeddings)
-    assert type(embedder).__name__ == "OpenAIEmbeddings"
+    # Accounted since item 19 closed: the cloud embedder bills the run that is embedding.
+    assert type(embedder).__name__ == "AccountedEmbeddings"
 
 
 def test_the_cloud_lane_refuses_to_guess_an_embedding_model() -> None:

@@ -1,8 +1,8 @@
 """Embedding spend, accounted on the same rules as chat spend.
 
-**Not wired.** Nothing outside this module constructs :class:`AccountedEmbeddings`, and no chat
-call reaches the ledger either, so today neither kind of spend is accounted by anything. Leak
-inventory item 19; this docstring said otherwise until item 20.
+**Wired.** ``build_embeddings`` constructs :class:`AccountedEmbeddings` for the cloud lane, billed
+to the run that is embedding. Until then nothing constructed it (leak inventory item 19), and this
+docstring had said otherwise (item 20).
 
 Leak-inventory item 9 was that it was not. The ledger reads ``usage_metadata`` off chat replies;
 embeddings do not produce one, so on the cloud lane indexing and querying the corpus cost money
@@ -34,6 +34,7 @@ underneath it and reads what the API actually reported. Recorded as leak-invento
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from langchain_core.embeddings import Embeddings
@@ -74,10 +75,21 @@ class AccountedEmbeddings(Embeddings):
             rather than as zero, for the reason in the module docstring.
     """
 
-    def __init__(self, inner: UsageReportingEmbeddings, model: str, ledger: SpendLedger) -> None:
+    def __init__(
+        self,
+        inner: UsageReportingEmbeddings,
+        model: str,
+        ledger: SpendLedger | Callable[[], SpendLedger],
+    ) -> None:
         self.inner = inner
         self.model = model
-        self.ledger = ledger
+        self._ledger = ledger
+
+    @property
+    def ledger(self) -> SpendLedger:
+        """The ledger this call is billed to. A callable is resolved on every call, because the
+        corpus index outlives any one run: see ``guardrails/run_ledger.py:charged_ledger``."""
+        return self._ledger() if callable(self._ledger) else self._ledger
 
     def _account(self, texts: list[str]) -> list[list[float]]:
         vectors, tokens = self.inner.embed_with_usage(texts)
@@ -93,8 +105,9 @@ class AccountedEmbeddings(Embeddings):
         # Input only. An embedding response has no output tokens -- the vector is not billed as
         # generation -- so recording any would overstate the cost at the output rate, which is
         # typically several times the input rate.
-        self.ledger.record_usage(self.model, Usage(input_tokens=tokens, output_tokens=0))
-        self.ledger.check()
+        ledger = self.ledger
+        ledger.record_usage(self.model, Usage(input_tokens=tokens, output_tokens=0))
+        ledger.check()
         return vectors
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:

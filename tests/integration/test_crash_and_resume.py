@@ -32,7 +32,7 @@ import pytest
 from langgraph.graph import END, START, StateGraph
 
 from agentgate.config import Settings
-from agentgate.graph.build import build_graph, checkpointer_for
+from agentgate.graph.build import build_graph, checkpointer_for, run_config
 from agentgate.graph.state import AgentState, initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
 
@@ -201,10 +201,7 @@ def test_a_side_effect_before_the_failure_point_happens_only_once_here(
 def test_the_project_graph_resumes_on_the_same_thread(tmp_path: Path) -> None:
     """Not a toy topology: the actual graph, interrupted before it finalises and resumed."""
     settings = sqlite_settings(tmp_path)
-    config = {
-        "configurable": {"thread_id": "project-graph"},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, "project-graph")
 
     with checkpointer_for(settings) as saver:
         # interrupt_before is a compile-time option. Passing it in the invoke config is
@@ -236,10 +233,7 @@ def test_state_persists_across_two_separate_checkpointer_connections(
 ) -> None:
     """Proves the durability is in the database rather than in a live object."""
     settings = sqlite_settings(tmp_path)
-    config = {
-        "configurable": {"thread_id": "across-connections"},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, "across-connections")
 
     with checkpointer_for(settings) as saver:
         build_graph(settings, saver, model_factory=scripted_factory).invoke(

@@ -17,7 +17,8 @@ request, public ones included. Leak inventory item 17 has the measurement and it
 
 **What it does not close.** A cloud-only deployment's most contained lane is the cloud, so the
 corpus and every query are still embedded there -- the same residual egress as item 14's
-classification. And there, embedding spend is still unaccounted: item 19.
+classification. That spend is accounted: every call is billed to the run that made it, and checked
+against its ceiling (item 19, closed).
 
 **It is not a language model and does not pretend to be.** It has no notion of synonymy: a
 query matches a document when they share vocabulary. That is enough to prove the plumbing --
@@ -43,6 +44,8 @@ from langchain_core.embeddings import Embeddings
 
 from agentgate.config import Lane, Settings
 from agentgate.errors import AgentgateError
+from agentgate.guardrails.run_ledger import charged_ledger
+from agentgate.retrieval.accounting import AccountedEmbeddings, OpenAIEmbeddingsWithUsage
 
 DIMENSIONS: Final = 4096
 """MEASURED, not chosen for looking reasonable.
@@ -221,22 +224,21 @@ def build_embeddings(settings: Settings) -> Embeddings:
         msg = "the cloud lane needs OPENAI_API_KEY to embed"
         raise EmbeddingsUnavailableError(msg)
 
-    from langchain_openai import OpenAIEmbeddings  # noqa: PLC0415 - lane-specific import
-
-    # Field names, not the aliases. ``api_key`` and ``timeout`` are accepted at runtime and
-    # rejected by the type checker, which is the direction of that disagreement worth obeying.
-    return OpenAIEmbeddings(
-        model=settings.embedding_model,
-        openai_api_key=settings.openai_api_key,
-        # The same endpoint the cloud lane's chat calls go to. Absent until leak inventory item
-        # 17, which made this path the only egress in the system that **could not be observed at
-        # all**: with no endpoint to override, every request went to api.openai.com and no double
-        # could ever see one. A leak nothing can watch is a leak nothing can pin.
-        #
-        # `openai_api_base`, not the `base_url` alias, for the reason the comment above gives:
-        # mypy knows the field names and rejects the aliases, and that is the direction of the
-        # disagreement worth obeying. Written as `base_url` first, and the type checker caught
-        # it -- which is the same trap as leak inventory item 2, one layer up.
-        openai_api_base=settings.openai_base_url,
-        request_timeout=settings.request_timeout_seconds,
+    # Accounted, and billed to whichever run is embedding: the index outlives any one run, so
+    # the ledger is resolved per call from the research branch's charge rather than held here.
+    # This is the wiring leak inventory item 19 found missing -- `AccountedEmbeddings` was built,
+    # tested, and constructed by nothing, so embedding spend reached no ceiling.
+    #
+    # The client is called directly rather than through `OpenAIEmbeddings`, which discards the
+    # usage block (item 11). It is pointed at the same endpoint as the cloud lane's chat calls,
+    # which is what makes this egress observable on a stub at all (item 17).
+    return AccountedEmbeddings(
+        OpenAIEmbeddingsWithUsage(
+            model=settings.embedding_model,
+            api_key=settings.openai_api_key.get_secret_value(),
+            timeout=settings.request_timeout_seconds,
+            base_url=settings.openai_base_url,
+        ),
+        settings.embedding_model,
+        charged_ledger,
     )

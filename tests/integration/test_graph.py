@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from agentgate.config import CallClass, CheckpointerBackend, Lane, Settings, Tier
-from agentgate.graph.build import build_checkpointer, build_graph, checkpointer_for
+from agentgate.graph.build import build_checkpointer, build_graph, checkpointer_for, run_config
 from agentgate.graph.routing import route_by_budget
 from agentgate.graph.state import initial_state
 from agentgate.models.fake import FakeChatModel, scripted_json
@@ -47,10 +47,7 @@ def run(settings: Settings, request: str, response: str, **state: object) -> dic
     graph = build_graph(settings, build_checkpointer(settings), model_factory=factory_for(response))
     return graph.invoke(  # type: ignore[no-any-return]
         {**initial_state(request, "corr-1"), **state},
-        {
-            "configurable": {"thread_id": str(uuid.uuid4())},
-            "recursion_limit": settings.recursion_limit,
-        },
+        run_config(settings, str(uuid.uuid4())),
     )
 
 
@@ -214,10 +211,7 @@ def test_the_checkpointer_is_chosen_by_configuration_alone() -> None:
 
 def test_a_sqlite_configured_run_persists_to_disk(tmp_path: Any) -> None:
     settings = settings_with(checkpointer="sqlite", sqlite_path=tmp_path / "graph.db")
-    config = {
-        "configurable": {"thread_id": "persisted"},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, "persisted")
 
     with checkpointer_for(settings) as saver:
         graph = build_graph(settings, saver, model_factory=factory_for(verdict("public")))
@@ -243,10 +237,7 @@ def test_the_same_graph_runs_under_every_available_checkpointer(tmp_path: Any) -
             graph = build_graph(settings, saver, model_factory=factory_for(verdict("internal")))
             result = graph.invoke(
                 initial_state("A request.", "corr-1"),
-                {
-                    "configurable": {"thread_id": f"parity-{backend}"},
-                    "recursion_limit": settings.recursion_limit,
-                },
+                run_config(settings, f"parity-{backend}"),
             )
         outcomes.append((result["lane"], result["finalised"], len(result["audit_trail"])))
 

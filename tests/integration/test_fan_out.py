@@ -29,7 +29,7 @@ from langchain_core.documents import Document
 from langgraph.types import Command
 
 from agentgate.config import Settings
-from agentgate.graph.build import build_checkpointer, build_graph
+from agentgate.graph.build import build_checkpointer, build_graph, run_config
 from agentgate.graph.completeness import research_gaps
 from agentgate.graph.nodes.researcher import BRANCH, dispatch
 from agentgate.graph.state import AgentState, findings_of, initial_state, outcomes_of
@@ -103,10 +103,7 @@ def run_graph(settings: Settings, questions: list[str], retriever: Any) -> dict[
         model_factory=model_factory,
         retriever_factory=lambda _settings: retriever,
     )
-    config = {
-        "configurable": {"thread_id": str(uuid.uuid4())},
-        "recursion_limit": settings.recursion_limit,
-    }
+    config = run_config(settings, str(uuid.uuid4()))
     state = initial_state("Compare the refund policy against complaints", str(uuid.uuid4()))
     state["sub_questions"] = questions
 

@@ -204,12 +204,23 @@ def invoke_structured[SchemaT: BaseModel](
     if not native:
         return invoke_with_repair(model, schema, prompt, max_attempts=max_attempts)
 
+    # The schema is bound as a plain JSON-schema dict and the reply parsed here, rather than via
+    # `with_structured_output`. That helper hands the OpenAI client a pydantic class, and the
+    # client then parses *inside the model call*: a reply that does not validate raises before
+    # the call returns, so a request that reached the provider and was billed reports no usage
+    # at all -- the callback sees an error, not a result. Found by the run ledger counting five
+    # requests at a stub and four in the book. Same shape as leak inventory item 11: a client
+    # convenience discarding the number the budget depends on.
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()},
+    }
     try:
-        result = model.with_structured_output(schema).invoke(_as_messages(prompt))
+        reply = model.bind(response_format=response_format).invoke(_as_messages(prompt))
+        # Strict: a native reply is JSON and nothing else. Prose around it is what the repair
+        # path is for, and accepting it here would hide a lane that does not do native.
+        return schema.model_validate(json.loads(str(reply.content)))
     except (NotImplementedError, ValueError, ValidationError):
         # A lane recorded as native that turns out not to be. Fall through rather than fail:
         # the matrix is an observation and observations go stale when a provider changes.
         return invoke_with_repair(model, schema, prompt, max_attempts=max_attempts)
-    if isinstance(result, schema):
-        return result
-    return schema.model_validate(result)
