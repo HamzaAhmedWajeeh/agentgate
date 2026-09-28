@@ -670,6 +670,11 @@ class Settings(BaseSettings):
         - **cloud-only** deployment: cloud. There is nowhere else to send it, so the egress
           remains and is documented rather than closed. Leak inventory item 14.
 
+        **Retrieval embeds on it too** -- the corpus index and every research query -- which is
+        leak inventory item 17 closed on hybrid deployments and left open on cloud-only ones, for
+        the same reason as item 14. One rule for "the most contained lane", read by both, rather
+        than a second answer that could drift from this one.
+
         Folded with :func:`narrower_of` rather than sorted, because that function is the one
         place the ordering is defined and commutativity is what makes the fold well defined
         whatever order the set iterates in.

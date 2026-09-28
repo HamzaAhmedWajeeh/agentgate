@@ -201,6 +201,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Retrieval embeds on the most contained lane the deployment can reach**, so on a hybrid
+  deployment neither a restricted request's research queries nor the corpus reach the third party.
+  `build_embeddings` reads `classification_lane` -- the rule classification already uses -- instead
+  of the configured default. One index, no routing inside retrieval, no new setting. The cost is
+  retrieval quality on every request, public ones included: 90% top-4 against a 20% chance floor,
+  measured on this 20-chunk corpus at 301 distinct terms and not beyond it. A cloud-only deployment
+  still embeds on the cloud, and is pinned as documented egress. ADR 0004 item 17, closed for hybrid
+  deployments; the test that asserted the leak happened now asserts its absence.
 - **The README said embedding spend was accounted and chat spend was the half left to wire.**
   Neither is accounted: `AccountedEmbeddings` is constructed by nothing and no chat call reaches
   the ledger. The same claim was in ADR 0004's gaps table, `accounting.py`'s docstring and the

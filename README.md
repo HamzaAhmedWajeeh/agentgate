@@ -43,7 +43,7 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
   and says so: that API exposes no pricing, and no price is ever inferred from a name.
 
 - The graph: classification, a policy gate that routes restricted content to the sovereign lane
-  **for its chat calls** -- see the retrieval caveat below, which is not a footnote,
+  -- see below for exactly what that is claimed to cover, which is not a footnote --
   research fanned out over a compiled retrieval subgraph, a drafting worker, and a human
   approval gate that pauses before anything irreversible. Rejection returns the draft for
   revision, and a reviewer who never approves is stopped by the iteration budget rather than by
@@ -95,15 +95,27 @@ request to the sovereign lane and no sovereign endpoint is configured, the run s
 alternative is serving it from the lane policy just ruled out, which is what used to happen and
 is ADR 0004 item 13.
 
-**The policy gate is enforced for chat calls, and not for retrieval.** What is pinned on the
-wire, against two stub endpoints with separate request logs: the drafter's synthesis call and the
-classifier's call both go to the lane the router chose. What is **not**: research queries. The
-embedder dispatches on the configured lane and never sees the route, so on a hybrid deployment a
-restricted request has its sub-questions -- and the whole corpus -- embedded by the third party.
-That is ADR 0004 item 17, it is **open**, and it is recorded by a test that asserts the egress
-happens rather than by a note somebody has to remember. **So this system does not claim that
-restricted content never reaches a cloud provider.** It claims that the chat calls go where policy
-sent them, and names the path that does not.
+**On a hybrid deployment, restricted content reaches no cloud provider through the chat calls or
+through retrieval.** That is the claim, and it is pinned on the wire against two stub endpoints
+with separate request logs, in a run as far as the approval gate. The chat calls are the
+classifier's, which runs on the most contained lane, and the drafter's, which runs on the lane the
+router chose (ADR 0004 items 14 and 13). Retrieval indexes the corpus and embeds every research
+query on the most contained lane -- in process, on a hybrid deployment -- so the cloud endpoint
+receives no embedding request at all, checked against the token ids the client actually sends
+rather than the raw body (item 17). Nothing broader is claimed:
+
+- **A cloud-only deployment** has nowhere more contained to go. It classifies on the cloud, and it
+  indexes the corpus and embeds public sub-questions there. It refuses a restricted request
+  rather than serving it from the cloud.
+- **The price is retrieval quality on every request**, public ones included, because one index
+  serves every route: a hybrid deployment searches a bag-of-words index even for a request drafted
+  in the cloud. Measured at 90% top-4 against a 20% chance floor -- on this 20-chunk corpus, at 301
+  distinct terms, and not beyond it. A corpus an order of magnitude larger has to be re-measured.
+- **Past the approval gate is not pinned.** A rejected draft is revised on the same routed lane,
+  and no wire test follows it there.
+- **Still open**: no retries or fallbacks on any lane (item 15), the routed tier is not applied
+  (item 16), streamed calls report no usage (item 18), and embedding spend is accounted by nothing
+  on the one deployment that still has any (item 19).
 
 **Classification runs on the most contained lane available, which on a cloud-only deployment is
 the cloud.** The raw request is shown to the third party in order to decide whether it was

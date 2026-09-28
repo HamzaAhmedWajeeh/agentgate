@@ -1,9 +1,23 @@
 """Embeddings, chosen by lane like everything else that reaches a network.
 
-The cloud lane uses the configured embedding model. Every other lane uses
-:class:`HashingEmbeddings`, an in-process deterministic vectoriser with no network and no
-cost, which is what lets the whole test suite exercise real retrieval rather than a stub that
-returns whatever the test wanted.
+**Which lane: the most contained one the deployment can reach**, not the configured default and
+not the routed one. That is :attr:`Settings.classification_lane`, the same rule classification
+uses, and deliberately not a second copy of it. On that lane the cloud uses the configured
+embedding model; every other lane uses :class:`HashingEmbeddings`, an in-process deterministic
+vectoriser with no network and no cost, which is also what lets the whole test suite exercise real
+retrieval rather than a stub that returns whatever the test wanted.
+
+Why not the routed lane, as the chat calls use: **a vector index belongs to the model that built
+it.** A query embedded by one model cannot search an index built by another, so honouring the
+route would mean one index per lane -- and without a sovereign embedding endpoint, the sovereign
+index would be built by the hashing embedder, making retrieval quality correlate exactly with
+sensitivity. One index on the contained lane means no routing inside retrieval and, on a hybrid
+deployment, no corpus or query text reaching a third party. It costs retrieval quality on every
+request, public ones included. Leak inventory item 17 has the measurement and its limits.
+
+**What it does not close.** A cloud-only deployment's most contained lane is the cloud, so the
+corpus and every query are still embedded there -- the same residual egress as item 14's
+classification. And there, embedding spend is still unaccounted: item 19.
 
 **It is not a language model and does not pretend to be.** It has no notion of synonymy: a
 query matches a document when they share vocabulary. That is enough to prove the plumbing --
@@ -182,15 +196,17 @@ class HashingEmbeddings(Embeddings):
 
 
 def build_embeddings(settings: Settings) -> Embeddings:
-    """Construct the embeddings this configuration asks for.
+    """Construct the embeddings for the most contained lane this deployment can reach.
 
     Raises:
-        EmbeddingsUnavailableError: if the cloud lane is selected without an embedding model.
+        EmbeddingsUnavailableError: if that lane is the cloud and no embedding model is named.
             Indexing against an unnamed model is not something to guess at -- the identifier
             determines the vector space, and a wrong guess produces an index that retrieves
             confidently and wrongly.
     """
-    if settings.lane is not Lane.CLOUD:
+    # Not ``settings.lane``, which is the configured default and on a hybrid deployment is the
+    # cloud: that sent restricted research queries, and the whole corpus, to the third party.
+    if settings.classification_lane is not Lane.CLOUD:
         return HashingEmbeddings()
 
     if not settings.embedding_model:

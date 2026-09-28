@@ -24,8 +24,10 @@ Two canaries, and the split is deliberate:
 Offline and free: every endpoint here is a loopback stub, and no test reaches a real provider.
 
 The last section is the exception to "no research branch runs". Everything above seeds findings,
-which keeps the run away from retrieval -- and that turned out to be where the next leak was, so
-one test now runs the real branch and records what the embedder sends. Leak inventory item 17.
+which keeps the run away from retrieval -- and that turned out to be where the next leak was. The
+tests there run the real branch and read what the embedder sends: nothing, on a hybrid deployment,
+since leak inventory item 17 closed; the corpus and every query, on a cloud-only one, which is
+where it stays open.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from tests.doubles.openai_compatible import StubBehaviour, StubServer, running_s
 
 from agentgate.config import Lane, Settings, Tier
 from agentgate.graph.build import build_checkpointer, build_graph
-from agentgate.graph.state import Finding, initial_state
+from agentgate.graph.state import Finding, findings_of, initial_state
 from agentgate.models.registry import LaneUnavailableError
 from agentgate.retrieval.embeddings import build_embeddings
 
@@ -513,55 +515,198 @@ def run_with_research(settings: Settings, request: str, question: str) -> dict[s
     )
 
 
-def test_a_restricted_research_query_is_embedded_by_the_cloud_provider(
+def cloud_only_with_embeddings(cloud: StubServer) -> Settings:
+    """A deployment with one lane, and it is the cloud.
+
+    The configuration item 17's fix does not reach. With no sovereign endpoint the most contained
+    lane is the cloud, so the corpus and every query are still embedded there -- the same shape
+    as item 14's classification egress, and pinned the same way.
+    """
+    return Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        lane=Lane.CLOUD.value,
+        openai_api_key="not-required",
+        openai_base_url=cloud.base_url,
+        cloud_capable_model=CLOUD_CAPABLE,
+        cloud_cheap_model=CLOUD_CHEAP,
+        embedding_model=EMBEDDING_MODEL,
+        corpus_path=CORPUS,
+        model_prices_usd_per_million={
+            CLOUD_CAPABLE: {"input": 1.0, "output": 4.0},
+            CLOUD_CHEAP: {"input": 0.1, "output": 0.4},
+            EMBEDDING_MODEL: {"input": 0.02, "output": 0.0},
+        },
+    )
+
+
+PUBLIC_RETRIEVAL_QUESTION = "What is the published refund window?"
+
+
+def corpus_sources_found(result: dict[str, Any]) -> set[str]:
+    """Which committed corpus files the run's findings came from.
+
+    The presence half of every absence assertion below. An index that was never built, or a
+    research branch that never ran, produces no finding with a corpus source -- so a run that
+    embedded nothing anywhere cannot satisfy this, and "nothing reached the cloud" cannot be
+    true merely because nothing happened.
+    """
+    on_disk = {path.name for path in CORPUS.glob("*.md")}
+    # A source is ``file.md#Heading``: the chunk's file, then the section it was cut from.
+    return {finding.source.split("#")[0] for finding in findings_of(result)} & on_disk  # type: ignore[arg-type]
+
+
+def test_a_restricted_research_query_never_reaches_the_cloud_embedding_endpoint(
     cloud: StubServer, sovereign: StubServer
 ) -> None:
-    """Leak inventory item 17, recorded as a passing assertion because it is what happens.
+    """Leak inventory item 17, closed, and this is the test that used to assert it happened.
 
-    `build_embeddings` dispatches on ``settings.lane`` -- the configured default -- and never sees
-    the route. So on a hybrid deployment a request the policy gate sent to the sovereign lane has
-    its research queries embedded by the third party anyway. The chat calls were fixed by item 13;
-    this is the same defect in the function next door, and item 13's guards could not see it
-    because they seed findings and never research.
+    Retrieval embeds on the most contained lane the deployment can reach -- the same rule
+    classification uses -- so on a hybrid deployment the sub-questions of a restricted request are
+    embedded in process and never sent anywhere.
 
     The canary is in the sub-question rather than only in the request, which is where it lives in
     reality: the sub-questions of a restricted request carry the identifiers that made it
     restricted. A question about a refund window is not answerable without naming the account.
 
-    Written as an assertion that the leak *happens*, exactly like item 14's documented egress, so
-    closing it is a visible inversion of a named test.
+    Read through `decode_embedding_input` rather than grepped. The client tokenises before it
+    sends, so a canary on the wire is token ids; the first version of the leak assertion grepped
+    the raw body and passed against a leak in progress. An absence assertion written that way
+    would pass forever.
     """
     settings = hybrid_with_embeddings(cloud, sovereign)
 
     result = run_with_research(settings, RESTRICTED_REQUEST, RETRIEVAL_QUESTION)
 
     assert result["lane"] == Lane.SOVEREIGN.value, "precondition: the router chose sovereign"
-    assert cloud.behaviour.embedding_requests, (
-        "no embedding request reached the cloud endpoint, so this test is asserting about an "
-        "empty log -- check that embedding_model is set and that a research branch ran"
+    assert corpus_sources_found(result), (
+        "no finding came from the corpus, so retrieval did not run and the absence below is "
+        "asserting about a run that embedded nothing"
     )
 
-    # Decoded, not grepped. The raw body carries token ids, so the first version of this
-    # assertion looked for "4929-1123-8876" in the JSON and failed -- for the right reason, and
-    # it is the reason `decode_embedding_input` exists. An absence assertion written the naive
-    # way would have passed forever.
     embedded = "\n".join(cloud.behaviour.embedding_texts())
-    assert "4929-1123-8876" in embedded, (
-        "the account number no longer reaches the cloud embedding endpoint; if that is "
-        "deliberate, this test and ADR 0004 item 17 are what to rewrite"
+    leaked = [canary for canary in ("4929-1123-8876", "Jane Doe") if canary in embedded]
+    assert leaked == [], (
+        f"{leaked} reached the cloud embedding endpoint: retrieval is embedding on the configured "
+        "lane rather than the contained one, which is ADR 0004 item 17 reopened"
     )
-    assert "Jane Doe" in embedded
+    assert cloud.behaviour.embedding_requests == [], (
+        "the cloud endpoint served an embedding request on a hybrid deployment"
+    )
 
-    # And the chat half is still correct, which is what makes this a *separate* leak rather than
-    # a regression of item 13. No chat request reached the cloud endpoint at all.
+    # Chat and retrieval together: nothing at all reached the third party. The helper reads both
+    # logs, and `test_the_canary_helper_reads_the_embedding_log` below is what keeps it doing so.
+    assert canaries_seen_by(cloud, REQUEST_CANARIES) == []
     assert cloud.behaviour.requests_seen == [], (
-        "a chat call reached the cloud endpoint; item 13 has regressed and this test is "
-        "describing the wrong failure"
+        "a chat call reached the cloud endpoint; item 13 has regressed"
     )
+
+
+def test_the_corpus_is_not_indexed_through_the_cloud_endpoint_either(
+    cloud: StubServer, sovereign: StubServer
+) -> None:
+    """Querying is not the only egress: every chunk of the corpus is embedded to build the index.
+
+    A vector index belongs to the model that built it, so a query embedded somewhere contained
+    cannot search an index built by the cloud -- which is why closing item 17 was a decision about
+    the index rather than about the query. The index is built by the same contained embedder, so
+    no batch of corpus text reaches the third party.
+    """
+    settings = hybrid_with_embeddings(cloud, sovereign)
+
+    result = run_with_research(settings, RESTRICTED_REQUEST, RETRIEVAL_QUESTION)
+
+    assert corpus_sources_found(result), "precondition: an index was built and searched"
+    batched = [
+        body
+        for body in cloud.behaviour.embedding_requests
+        if isinstance(body.get("input"), list) and len(body["input"]) > 1
+    ]
+    assert batched == [], (
+        f"{len(batched)} multi-text embedding request(s) reached the cloud endpoint, so the "
+        "corpus is being indexed by the third party"
+    )
+
+
+def test_the_contained_index_is_built_in_process_not_on_the_operators_endpoint(
+    cloud: StubServer, sovereign: StubServer
+) -> None:
+    """Which contained embedder, stated rather than implied.
+
+    The sovereign lane has no embedding endpoint -- nothing in configuration names one -- so the
+    contained embedder is `HashingEmbeddings`, in process. The operator's endpoint answers the
+    classifier and the drafter and receives no embedding request, which is the presence that makes
+    its empty embedding log mean "not asked" rather than "not running".
+    """
+    settings = hybrid_with_embeddings(cloud, sovereign)
+
+    result = run_with_research(settings, RESTRICTED_REQUEST, RETRIEVAL_QUESTION)
+
+    assert corpus_sources_found(result), "precondition: retrieval ran"
+    assert sovereign.behaviour.requests_seen, "precondition: the sovereign endpoint was in use"
+    assert sovereign.behaviour.embedding_requests == [], (
+        "the sovereign endpoint served an embedding request, which no code path constructs"
+    )
+
+
+def test_a_hybrid_deployment_embeds_public_research_in_process_too(
+    cloud: StubServer, sovereign: StubServer
+) -> None:
+    """The cost of the decision, pinned: one index, and every request searches it.
+
+    A public request drafted on the cloud lane still retrieves from the contained index. There is
+    no routing inside retrieval, which is what makes the guarantee unconditional on a hybrid
+    deployment -- and what makes retrieval quality the contained embedder's for every request,
+    not just restricted ones. ADR 0004 item 17 records the measured figure and its limits.
+    """
+    cloud.behaviour.reply = {"answer": "A summary of the published refund window."}
+    sovereign.behaviour.reply = verdict("public", pii=False)
+    settings = hybrid_with_embeddings(cloud, sovereign)
+
+    result = run_with_research(settings, PUBLIC_REQUEST, PUBLIC_RETRIEVAL_QUESTION)
+
+    assert result["lane"] == Lane.CLOUD.value, "precondition: public content routes to cloud"
+    assert cloud.behaviour.requests_seen, "precondition: the cloud lane drafted"
+    assert corpus_sources_found(result), "precondition: retrieval ran"
+    assert cloud.behaviour.embedding_requests == [], (
+        "a public request on a hybrid deployment embedded on the cloud lane, so retrieval is "
+        "routing by lane again and the one-index decision in item 17 has been undone"
+    )
+
+
+# ---------------------------------------- a cloud-only deployment, where the egress remains
+
+
+def test_a_cloud_only_deployment_embeds_on_the_cloud_lane_as_documented_egress(
+    cloud: StubServer,
+) -> None:
+    """The part of item 17 that stays open, for the same reason item 14's does.
+
+    With one lane, the most contained lane is the cloud, and the corpus and every query are
+    embedded there. Not a defect in code -- a property of having one lane -- so it is recorded as a
+    passing assertion rather than described as closed because the hybrid case was.
+
+    Restricted content does not reach it: a cloud-only deployment refuses a restricted request
+    before research (item 13). The corpus does, and so does every public sub-question.
+    """
+    cloud.behaviour.reply = verdict("public", pii=False)
+    settings = cloud_only_with_embeddings(cloud)
+    assert settings.classification_lane is Lane.CLOUD, "precondition: nowhere else to embed"
+
+    result = run_with_research(settings, PUBLIC_REQUEST, PUBLIC_RETRIEVAL_QUESTION)
+
+    assert corpus_sources_found(result), "precondition: retrieval ran"
+    assert any(
+        isinstance(body.get("input"), list) and len(body["input"]) > 1
+        for body in cloud.behaviour.embedding_requests
+    ), (
+        "the corpus was not indexed through the cloud endpoint on a cloud-only deployment; if "
+        "that is deliberate, this test and ADR 0004 item 17 are what to rewrite"
+    )
+    assert all(body.get("model") == EMBEDDING_MODEL for body in cloud.behaviour.embedding_requests)
 
 
 def test_the_embedding_decoder_recovers_text_the_corpus_actually_contains(
-    cloud: StubServer, sovereign: StubServer
+    cloud: StubServer,
 ) -> None:
     """The control for every canary assertion that reads an embedding request.
 
@@ -570,13 +715,15 @@ def test_the_embedding_decoder_recovers_text_the_corpus_actually_contains(
     the tokeniser is wrong, or a client upgrade changes the encoding, the decode returns plausible
     rubbish and every one of those assertions goes quiet.
 
-    So this checks the decode against something independently known: a line that is in the
-    committed corpus on disk. It is not asserting that retrieval works -- it is asserting that the
-    instrument reads.
+    Run on a cloud-only deployment because that is now the only configuration that embeds on a
+    networked endpoint at all. It checks the decode against something independently known: a line
+    that is in the committed corpus on disk. It is not asserting that retrieval works -- it is
+    asserting that the instrument reads.
     """
-    settings = hybrid_with_embeddings(cloud, sovereign)
+    cloud.behaviour.reply = verdict("public", pii=False)
+    settings = cloud_only_with_embeddings(cloud)
 
-    run_with_research(settings, RESTRICTED_REQUEST, RETRIEVAL_QUESTION)
+    run_with_research(settings, PUBLIC_REQUEST, PUBLIC_RETRIEVAL_QUESTION)
 
     decoded = "\n".join(cloud.behaviour.embedding_texts())
     assert decoded.strip(), "the decoder returned nothing at all"
@@ -601,68 +748,41 @@ def test_the_embedding_decoder_recovers_text_the_corpus_actually_contains(
     )
 
 
-def test_the_sovereign_lane_is_not_where_the_research_query_went(
-    cloud: StubServer, sovereign: StubServer
-) -> None:
-    """The absence that makes the presence above mean something.
+def test_the_canary_helper_reads_the_embedding_log(cloud: StubServer) -> None:
+    """Keeps `canaries_seen_by` looking at retrieval egress, which nothing else now does.
 
-    If both endpoints saw the query, the finding would be "retrieval embeds everywhere" rather
-    than "retrieval ignores the route". The operator's own endpoint received no embedding request
-    at all, because nothing ever asks it for one -- there is no sovereign embedding path.
+    Until item 17 closed, every configuration embedded on the cloud and the helper's widening to
+    decoded embedding texts was exercised by the leak itself. Now no hybrid run embeds there, so
+    narrowing the helper back to the chat log would pass every absence assertion in this file --
+    and would stay passing if the leak came back. This sends one embedding and nothing else, so
+    the only way the helper can see the marker is through the embedding log.
     """
-    settings = hybrid_with_embeddings(cloud, sovereign)
+    marker = "canary-7731-embedding-only"
+    build_embeddings(cloud_only_with_embeddings(cloud)).embed_query(f"refund window {marker}")
 
-    run_with_research(settings, RESTRICTED_REQUEST, RETRIEVAL_QUESTION)
-
-    assert cloud.behaviour.embedding_requests, "precondition: embeddings happened somewhere"
-    assert sovereign.behaviour.embedding_requests == [], (
-        "the sovereign endpoint served an embedding request, which no code path constructs"
+    assert cloud.behaviour.requests_seen == [], "precondition: no chat call was made"
+    assert cloud.behaviour.embedding_requests, "precondition: the embedding reached the stub"
+    assert canaries_seen_by(cloud, [marker]) == [marker], (
+        "the canary helper did not see content that reached the embedding endpoint, so every "
+        "absence assertion using it is blind to retrieval egress"
     )
 
 
-def test_the_corpus_itself_is_indexed_through_the_same_egress(
-    cloud: StubServer, sovereign: StubServer
-) -> None:
-    """Querying is not the only cost, and item 9 said so before it was closed.
-
-    Every chunk of the corpus is embedded through the provider as well, in one batch per index
-    build. Recorded because it bears directly on the options for closing item 17: an approach that
-    embeds the query somewhere contained still has to decide what indexed the corpus, and a corpus
-    indexed in one vector space cannot be searched with a query embedded in another.
-    """
-    settings = hybrid_with_embeddings(cloud, sovereign)
-
-    run_with_research(settings, RESTRICTED_REQUEST, RETRIEVAL_QUESTION)
-
-    batched = [
-        body
-        for body in cloud.behaviour.embedding_requests
-        if isinstance(body.get("input"), list) and len(body["input"]) > 1
-    ]
-    assert batched, (
-        "no multi-text embedding request arrived, so the corpus was not indexed through this "
-        "endpoint and the premise of the index question in ADR 0004 item 17 is wrong"
-    )
-    assert all(body.get("model") == EMBEDDING_MODEL for body in cloud.behaviour.embedding_requests)
-
-
-def test_no_embedding_call_is_accounted_for_anywhere(
-    cloud: StubServer, sovereign: StubServer
-) -> None:
-    """Leak inventory item 18, and the reason item 9 is reopened.
+def test_no_embedding_call_is_accounted_for_anywhere(cloud: StubServer) -> None:
+    """Leak inventory item 19, and the reason item 9 is reopened.
 
     Item 9 is recorded as **closed**, by `AccountedEmbeddings`. Nothing constructs it.
     `build_embeddings` returns a plain `OpenAIEmbeddings`, which -- as `accounting.py`'s own
     docstring says -- discards the usage block the budget depends on. So embedding spend is still
     invisible to every ceiling, which is precisely the state item 9 describes as fixed.
 
-    The endpoint reports usage; this asserts that the *client* throws it away, which is item 11
-    still live for the same reason. Read off the response the double sent rather than inferred:
-    the number is there on the wire and absent by the time anything could account for it.
+    Cloud-only since item 17 closed, because that is the only deployment left with cloud embedding
+    spend to account. Hybrid and fake deployments embed in process and spend nothing.
     """
-    settings = hybrid_with_embeddings(cloud, sovereign)
+    cloud.behaviour.reply = verdict("public", pii=False)
+    settings = cloud_only_with_embeddings(cloud)
 
-    run_with_research(settings, RESTRICTED_REQUEST, RETRIEVAL_QUESTION)
+    run_with_research(settings, PUBLIC_REQUEST, PUBLIC_RETRIEVAL_QUESTION)
 
     assert cloud.behaviour.embedding_requests, "precondition: embeddings happened"
 
@@ -671,5 +791,5 @@ def test_no_embedding_call_is_accounted_for_anywhere(
     embedder = build_embeddings(settings)
     assert type(embedder).__name__ == "OpenAIEmbeddings", (
         f"the index now embeds through {type(embedder).__name__}; if that is AccountedEmbeddings "
-        "then item 9 is genuinely closed and this test and items 9 and 18 are what to rewrite"
+        "then item 9 is genuinely closed and this test and items 9 and 19 are what to rewrite"
     )

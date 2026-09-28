@@ -131,6 +131,42 @@ def test_a_non_cloud_lane_embeds_in_process() -> None:
     assert isinstance(build_embeddings(settings_with()), HashingEmbeddings)
 
 
+CLOUD_WITH_EMBEDDINGS: dict[str, object] = {
+    "lane": "cloud",
+    "openai_api_key": "not-required",
+    "cloud_capable_model": "m",
+    "cloud_cheap_model": "m",
+    "embedding_model": "e",
+    "model_prices_usd_per_million": {
+        "m": {"input": 1.0, "output": 1.0},
+        "e": {"input": 0.02, "output": 0.0},
+        "s": {"input": 0.0, "output": 0.0},
+    },
+}
+
+
+def test_a_hybrid_deployment_embeds_in_process_whatever_its_default_lane() -> None:
+    """Leak inventory item 17. Retrieval embeds on the most contained lane the deployment can
+    reach -- `classification_lane`, the one rule for that question -- not on the configured
+    default. A cloud-default deployment with a sovereign endpoint indexes in process."""
+    settings = settings_with(
+        **CLOUD_WITH_EMBEDDINGS, sovereign_base_url="http://127.0.0.1:9", sovereign_model="s"
+    )
+    assert settings.lane.value == "cloud", "precondition: the default lane is the cloud"
+
+    assert isinstance(build_embeddings(settings), HashingEmbeddings)
+
+
+def test_a_cloud_only_deployment_still_embeds_on_the_cloud() -> None:
+    """The control for the test above, and the part of item 17 that stays open: with one lane,
+    the most contained lane is the cloud. Without this, a `build_embeddings` that returned the
+    hashing embedder unconditionally would pass the hybrid test."""
+    embedder = build_embeddings(settings_with(**CLOUD_WITH_EMBEDDINGS))
+
+    assert not isinstance(embedder, HashingEmbeddings)
+    assert type(embedder).__name__ == "OpenAIEmbeddings"
+
+
 def test_the_cloud_lane_refuses_to_guess_an_embedding_model() -> None:
     """The identifier determines the vector space. A wrong guess indexes cleanly and retrieves
     nonsense, which is the failure that looks least like a configuration error."""
