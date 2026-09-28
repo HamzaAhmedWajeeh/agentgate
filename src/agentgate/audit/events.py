@@ -36,6 +36,7 @@ class Decided(StrEnum):
     RESEARCHED = "researched"
     RESEARCH_FAILED = "research_failed"
     DRAFTED = "drafted"
+    PROPOSALS_DROPPED = "proposals_dropped"
     CITATION_FABRICATED = "citation_fabricated"
     TOOL_DENIED = "tool_denied"
     TOOL_FAILED = "tool_failed"
@@ -45,6 +46,7 @@ class Decided(StrEnum):
     FINALISED_INCOMPLETE = "finalised_incomplete"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVED = "approved"
+    APPROVAL_REFUSED = "approval_refused"
     REJECTED = "rejected"
     EXECUTED = "executed"
 

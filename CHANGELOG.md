@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Actions past the gate** (ADR 0004 item 24, closed). The drafter's final message is a JSON
+  object -- the draft and proposed actions, each a tool name and arguments -- parsed strictly by
+  this code and failing closed. Proposals the executor could not run are dropped before the gate and
+  audited. The gate shows the actions and a hash of exactly them; an approval must carry that hash,
+  and one that no longer matches is refused rather than run. `execute` is the executor: it holds the
+  `EXECUTOR` allowlist, checks the hash and the run ledger's ceiling, and performs each approved
+  action once, keyed by run, position and argument hash, through the effect sink. The only sink is
+  an append-only outbox, and `AGENTGATE_EFFECT_SINK` refuses any other value at startup. A crash
+  after an effect is written and before the checkpoint does not perform it twice. The CLI shows the
+  actions on the packet, and `approve` carries back the hash of what was shown.
+- ADR 0004 item 25: `create_agent`'s structured output turns a model that does not comply into a
+  paid retry loop -- 8 billed requests at a recursion limit of 8, from the fake and from the stub with
+  native structured output on and off, and no error until the limit. Pinned in
+  `test_toolchain_blind_spots.py`, with the run ledger shown stopping it at the spend ceiling first.
+  Not used: item 24's proposals are parsed from the drafter's final message instead.
 - **One run ledger reaching every model call in the graph.** `run_config` creates it per run and
   carries it in the config; classification, the drafter's whole `create_agent` loop and the
   embeddings behind retrieval are charged to it, and the token and dollar ceilings are checked after

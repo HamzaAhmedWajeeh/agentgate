@@ -31,8 +31,9 @@ from langgraph.types import Command, interrupt
 
 from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import Settings
+from agentgate.effects.proposals import digest_of
 from agentgate.graph.completeness import research_gaps
-from agentgate.graph.state import AgentState, Decision
+from agentgate.graph.state import AgentState, Decision, proposals_of
 
 NODE = "approval_gate"
 
@@ -54,9 +55,14 @@ def review_packet(state: AgentState) -> dict[str, Any]:
     person whose job is to catch it.
     """
     gaps = research_gaps(state)
+    proposals = proposals_of(state)
     return {
         "request": state.get("request", ""),
         "draft": state.get("draft", ""),
+        # The actions, exactly, and a hash of exactly them. An approval has to carry this hash
+        # back, so it can only ever authorise what was on this packet (leak inventory item 24).
+        "proposed_actions": [proposal.as_channel() for proposal in proposals],
+        "proposals_digest": digest_of(proposals),
         "findings": len(state.get("findings", [])),
         "answer_complete": gaps.complete,
         "research": gaps.as_detail(),
@@ -85,12 +91,25 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
     verdict = interrupt(packet)
 
     # --- below the interrupt: runs once, on the resume side. -----------------------------
-    decision, feedback = _read_verdict(verdict)
+    decision, feedback, approved_digest = _read_verdict(verdict)
+
+    # Approving has to name what it approves. The hash is recomputed from state here, on the
+    # resume side, and compared with the one the approval carries from the packet the human saw:
+    # a proposal changed after the pause no longer matches, and the approval does not transfer.
+    # With no proposals there is nothing to act on, so an approval without a hash is the old,
+    # draft-only approval; with any, the hash is required.
+    shown = packet["proposals_digest"]
+    matches = (
+        approved_digest == shown if approved_digest is not None else not packet["proposed_actions"]
+    )
+    if decision is Decision.APPROVED and not matches:
+        return _refused(state, settings, packet, revisions, approved_digest)
 
     if decision is Decision.APPROVED:
         return Command(
             update={
                 "decision": Decision.APPROVED.value,
+                "approved_digest": shown,
                 "audit_trail": [
                     audit_event(
                         node=NODE,
@@ -101,6 +120,8 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
                         detail={
                             "revision": revisions,
                             "approved_partial": not packet["answer_complete"],
+                            "proposals_digest": shown,
+                            "actions_approved": len(packet["proposed_actions"]),
                         },
                     )
                 ],
@@ -117,6 +138,7 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
             # being rejected; leaving it in place would have the next turn treat the run as
             # already drafted and walk straight back to the gate with the same text.
             "draft": "",
+            "proposed_actions": [],
             "audit_trail": [
                 audit_event(
                     node=NODE,
@@ -136,20 +158,61 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
     )
 
 
-def _read_verdict(verdict: Any) -> tuple[Decision, str]:
+def _refused(
+    state: AgentState,
+    settings: Settings,
+    packet: dict[str, Any],
+    revisions: int,
+    approved_digest: str | None,
+) -> Command[Destination]:
+    """An approval that does not match what was shown. Treated as a rejection: the run does not
+    act, the draft and its proposals go back for revision, and the refusal is recorded as itself
+    rather than as a reviewer's rejection."""
+    return Command(
+        update={
+            "decision": Decision.REJECTED.value,
+            "feedback": "the approval did not match the actions that were shown",
+            "revisions": revisions + 1,
+            "draft": "",
+            "proposed_actions": [],
+            "audit_trail": [
+                audit_event(
+                    node=NODE,
+                    decided=Decided.APPROVAL_REFUSED,
+                    correlation_id=state.get("correlation_id", ""),
+                    input_digest=digest(state.get("draft", "")),
+                    lane=state.get("lane"),
+                    detail={
+                        "revision": revisions,
+                        "revision_budget": settings.max_iterations,
+                        "proposals_digest": packet["proposals_digest"],
+                        "approval_carried": approved_digest,
+                        "actions_proposed": len(packet["proposed_actions"]),
+                    },
+                )
+            ],
+        },
+        goto="drafter",
+    )
+
+
+def _read_verdict(verdict: Any) -> tuple[Decision, str, str | None]:
     """Interpret whatever the resume supplied.
 
     Fails closed. Anything this does not recognise as an explicit approval is a rejection,
     because the cost of misreading a rejection as approval is an irreversible action nobody
     sanctioned, and the cost of the opposite is one more revision.
     """
+    approved_digest: str | None = None
     if isinstance(verdict, dict):
         raw = str(verdict.get("decision", "")).strip().lower()
         feedback = str(verdict.get("feedback", ""))
+        carried = verdict.get("approved_digest")
+        approved_digest = str(carried) if carried is not None else None
     else:
         raw = str(verdict).strip().lower()
         feedback = ""
 
     if raw == Decision.APPROVED.value:
-        return Decision.APPROVED, ""
-    return Decision.REJECTED, feedback
+        return Decision.APPROVED, "", approved_digest
+    return Decision.REJECTED, feedback, approved_digest

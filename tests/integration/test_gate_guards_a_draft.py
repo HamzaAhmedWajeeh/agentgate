@@ -1,19 +1,18 @@
-"""Leak inventory item 24: the human gate approves a draft, and no action exists to approve.
+"""Leak inventory item 24, closed: the gate now guards the action, not only a draft.
 
-The thesis is that a human gate approves anything irreversible. What a run actually reaches past
-the gate is ``execute``, which records ``irreversible_effects: []`` -- because nothing in the
-system ever proposes an effect. The executor's allowlist (``issue_refund``, ``send_customer_email``)
-is declared and held by no agent; there is no state channel a proposal could travel in; and
-``execute`` reads nothing that could name one.
+These were written as assertions of the old truth -- an approved run reached ``execute`` and
+recorded ``irreversible_effects: []``, no state channel could carry a proposal, ``execute`` ignored
+one handed to it, and nothing held the executor's tools. Closing the item inverted each of them,
+which is the point of pinning an open row as a passing test: the change is visible, named, and
+dated, rather than an improvement nobody noticed.
 
-Asserted as the current truth, in the same way as items 14, 17 and 18 were, so that closing it is a
-visible inversion of these tests rather than an improvement nobody can date. Every absence here is
-paired with a presence: the run does reach ``execute`` on an approval, so "nothing irreversible
-happened" is a statement about a run that got there and not about one that stopped short.
+Every effect is read off the outbox on disk. The outbox is the only effect sink, and configuration
+refuses any other, so what these tests prove happened is a record -- nothing real.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 from typing import Any, get_type_hints
@@ -21,79 +20,103 @@ from typing import Any, get_type_hints
 import pytest
 from langgraph.types import Command
 
-from agentgate.config import Settings
+from agentgate.config import CallClass, Settings
+from agentgate.effects.proposals import digest_of
 from agentgate.graph.build import build_checkpointer, build_graph, run_config
 from agentgate.graph.nodes.execute import execute
-from agentgate.graph.state import AgentState, Decision, initial_state
+from agentgate.graph.state import AgentState, Decision, Proposal, initial_state
+from agentgate.models.fake import FakeChatModel, scripted_json
 from agentgate.tools.registry import ALLOWLISTS, IRREVERSIBLE, Agent
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
 
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "agentgate"
+CORPUS = Path(__file__).resolve().parents[2] / "corpus"
+REFUND = {"tool": "issue_refund", "arguments": {"account": "4929", "amount_units": 240.0}}
+VERDICT = scripted_json(
+    {"sensitivity": "internal", "complexity": "simple", "contains_pii": False, "reason": "t"}
+)
 
 
-def approved_run() -> dict[str, Any]:
-    """A fake-lane run driven through the gate on an approval, to the end."""
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
-    graph = build_graph(settings, build_checkpointer(settings))
+def settings_for(tmp_path: Path) -> Settings:
+    return Settings(  # type: ignore[call-arg]
+        _env_file=None, corpus_path=CORPUS, outbox_path=tmp_path / "outbox.jsonl"
+    )
+
+
+def outbox(settings: Settings) -> list[dict[str, Any]]:
+    if not settings.outbox_path.exists():
+        return []
+    return [json.loads(line) for line in settings.outbox_path.read_text("utf-8").splitlines()]
+
+
+def factory(_s: Settings, _t: object, call_class: CallClass, **_k: object) -> Any:
+    if call_class is CallClass.SYNTHESIS:
+        reply = scripted_json({"draft": "Refunding the overcharge.", "proposed_actions": [REFUND]})
+        return FakeChatModel(responses=[reply])
+    return FakeChatModel(responses=[VERDICT])
+
+
+def test_an_approved_run_performs_the_action_that_was_proposed_and_shown(tmp_path: Path) -> None:
+    """Was: an approved run reached execute and nothing irreversible happened. Now the request
+    that asks for a refund produces one, the human is shown it, and approving performs it."""
+    settings = settings_for(tmp_path)
+    graph = build_graph(settings, build_checkpointer(settings), model_factory=factory)
     config = run_config(settings, str(uuid.uuid4()))
     state = initial_state("Refund the customer the 240 GBP they were overcharged.", "item-24")
     state["sub_questions"] = ["refund escalation"]
     graph.invoke(state, config)
-    return dict(graph.invoke(Command(resume={"decision": "approved"}), config))
+    shown = dict(graph.get_state(config).interrupts[0].value)
 
-
-def executed_event(result: dict[str, Any]) -> dict[str, Any]:
-    events = [e for e in result["audit_trail"] if e["decided"] == "executed"]
-    assert len(events) == 1, "precondition: the run passed the gate and reached execute once"
-    return events[0]
-
-
-def test_an_approved_run_reaches_execute_and_nothing_irreversible_happens() -> None:
-    """The headline claim, read off a real run. The request asks for a refund in so many words;
-    the gate approves; ``execute`` runs -- and records that it did nothing irreversible, because
-    nothing ever proposed that it should."""
-    result = approved_run()
+    result = graph.invoke(
+        Command(resume={"decision": "approved", "approved_digest": shown["proposals_digest"]}),
+        config,
+    )
 
     assert result["decision"] == Decision.APPROVED.value, "precondition: a human approved"
-    assert executed_event(result)["detail"]["irreversible_effects"] == []
-    assert "proposed_actions" not in result, "no proposal travelled to the gate"
+    executed = [e for e in result["audit_trail"] if e["decided"] == "executed"]
+    assert len(executed) == 1
+    assert [e["tool"] for e in executed[0]["detail"]["irreversible_effects"]] == ["issue_refund"]
+    assert [(e["tool"], e["arguments"]) for e in outbox(settings)] == [
+        (REFUND["tool"], REFUND["arguments"])
+    ]
 
 
-def test_there_is_no_state_channel_a_proposal_could_travel_in() -> None:
-    """Not just empty on this run: absent from the schema, so no node could write one."""
+def test_proposals_travel_in_their_own_state_channel() -> None:
+    """Was: no state channel a proposal could travel in."""
     channels = set(get_type_hints(AgentState, include_extras=False))
 
-    assert channels, "precondition: the schema was read"
-    assert "draft" in channels, "precondition: the thing the gate does approve is a channel"
-    assert not {name for name in channels if "action" in name or "proposal" in name}
+    assert "draft" in channels, "precondition: the schema was read"
+    assert "proposed_actions" in channels
+    assert "approved_digest" in channels
 
 
-def test_execute_ignores_a_proposal_even_when_one_is_handed_to_it() -> None:
-    """``execute`` reads nothing that could name an effect. Given an approved state carrying a
-    fabricated proposal, it still records none -- so no upstream change alone could make it act."""
+def test_execute_performs_an_approved_proposal_handed_to_it(tmp_path: Path) -> None:
+    """Was: execute ignored a proposal even when one was handed to it."""
+    settings = settings_for(tmp_path)
+    proposal = Proposal.model_validate(REFUND)
     state = initial_state("x", "item-24")
     state["decision"] = Decision.APPROVED.value
-    state["proposed_actions"] = [  # type: ignore[typeddict-unknown-key]
-        {"tool": "issue_refund", "arguments": {"account": "4929-1123-8876", "amount": 240}}
-    ]
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    state["proposed_actions"] = [proposal.as_channel()]
+    state["approved_digest"] = digest_of([proposal])
 
-    update = execute(state, settings)
+    update = execute(state, settings, run_config(settings, "item-24"))
 
-    assert update["audit_trail"][0]["decided"] == "executed", "precondition: it ran"
-    assert update["audit_trail"][0]["detail"]["irreversible_effects"] == []
+    effects = update["audit_trail"][0]["detail"]["irreversible_effects"]
+    assert [e["tool"] for e in effects] == ["issue_refund"]
+    assert [e["key"] for e in outbox(settings)] == [effects[0]["key"]]
 
 
-def test_the_executor_allowlist_is_declared_and_held_by_no_agent() -> None:
-    """The two irreversible tools exist, and are allowlisted to an executor that nothing in
-    ``src/`` constructs or binds -- the privilege separation is half built."""
+def test_the_executor_allowlist_is_held_by_the_executor() -> None:
+    """Was: declared and held by no agent. Now exactly two files use it: the screen, which reads
+    it to decide what may be *proposed*, and `execute`, which checks it before running anything.
+    The drafter -- the thing that proposes -- is not one of them."""
     assert ALLOWLISTS[Agent.EXECUTOR] == IRREVERSIBLE, "precondition: the executor's tools"
-    assert IRREVERSIBLE, "precondition: there are irreversible tools to hold"
 
     holders = sorted(
         path.relative_to(SOURCE).as_posix()
         for path in SOURCE.rglob("*.py")
         if path.name != "registry.py" and "Agent.EXECUTOR" in path.read_text(encoding="utf-8")
     )
-    assert holders == [], f"something now holds the executor's tools: {holders}"
+    assert holders == ["effects/proposals.py", "graph/nodes/execute.py"]
+    assert "graph/nodes/drafter.py" not in holders

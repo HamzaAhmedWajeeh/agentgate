@@ -237,13 +237,22 @@ def test_is_allowed_is_the_whole_decision() -> None:
 def test_the_instruction_does_not_mention_the_allowlist() -> None:
     """If a prompt were doing any of the work, this file would have to say so.
 
-    It is not. The drafter's system prompt is about how to write, and names no tool and no
-    prohibition. Asking a model not to do something is a request; this is the test that keeps
-    the request from being mistaken for the control.
+    It is not. The drafter's system prompt is about how to write, and carries no prohibition.
+    Asking a model not to do something is a request; this is the test that keeps the request
+    from being mistaken for the control.
+
+    Since item 24 the prompt does name tools -- the executor's, as things the drafter may
+    *propose*, because a model cannot propose an action it has not been told exists. That is a
+    menu, not a control: which proposals survive is decided in code (`screen_proposals`, and
+    `execute` again), and a proposal for anything else is dropped whatever the prompt said. So
+    the line held here is narrower and still the point: the prompt names no tool the drafter
+    holds, and none but the executor's.
     """
     lowered = INSTRUCTION.lower()
 
-    assert not any(name in lowered for name in TOOLS), "the prompt names a tool"
+    named = {name for name in TOOLS if name in lowered}
+    assert named <= ALLOWLISTS[Agent.EXECUTOR], f"the prompt names a non-executor tool: {named}"
+    assert not named & ALLOWLISTS[Agent.DRAFTER], "the prompt names a tool the drafter holds"
     for word in ("allowlist", "not allowed", "must not use", "forbidden", "permitted"):
         assert word not in lowered, f"the prompt is arguing with the model about '{word}'"
 

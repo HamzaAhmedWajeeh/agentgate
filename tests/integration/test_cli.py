@@ -505,3 +505,43 @@ def test_approving_in_a_new_process_reports_the_whole_runs_spend(tmp_path: Path)
     assert second.returncode == 0, second.stderr
 
     assert spent_tokens(second.stdout) >= spent_tokens(first.stdout) > 0
+
+
+# ------------------------------------------------------------------ actions past the gate
+
+
+PROPOSING_REPLY = {
+    # Read by the classifier as a public verdict, and by the drafter as its final message.
+    "sensitivity": "public",
+    "complexity": "simple",
+    "contains_pii": False,
+    "reason": "a published refund policy question",
+    "draft": "We will refund the overcharge.",
+    "proposed_actions": [
+        {"tool": "issue_refund", "arguments": {"account": "4929", "amount_units": 240.0}}
+    ],
+}
+
+
+def test_the_packet_shows_the_action_and_approve_performs_exactly_it(tmp_path: Path) -> None:
+    """ADR 0004 item 24, through the command line. `run` shows the proposed refund on the
+    packet; `approve`, in a new process, carries back the hash of that packet -- the one stored
+    with the pause -- and the refund lands in the outbox once."""
+    reply = StubBehaviour(reply=PROPOSING_REPLY, supports_native_structured_output=True)
+    with running_stub(reply) as cloud:
+        env = networked_environment(
+            tmp_path, cloud, AGENTGATE_OUTBOX_PATH=str(tmp_path / "outbox.jsonl")
+        )
+
+        shown = networked_cli(
+            tmp_path, env, "run", "Refund Jane.", "-q", "refund escalation", "--thread", "acts"
+        )
+        assert shown.returncode == 0, shown.stderr
+        assert "issue_refund(account='4929', amount_units=240.0)" in shown.stdout
+        assert not (tmp_path / "outbox.jsonl").exists(), "nothing performed before approval"
+
+        approved = networked_cli(tmp_path, env, "approve", "acts")
+        assert approved.returncode == 0, approved.stderr
+
+    lines = (tmp_path / "outbox.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["tool"] for line in lines] == ["issue_refund"]
