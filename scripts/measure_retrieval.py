@@ -16,7 +16,9 @@ client, the actual batching, and a real socket, so the call count is what a prov
 the wall time is everything except provider latency.
 
 *Retrieval quality* is real for ``HashingEmbeddings`` and **meaningless for the stub**, which
-returns a blake2b hash of the token ids it was sent. That is not a limitation to apologise for --
+returns a blake2b hash of whatever representation of the text it was sent -- strings, since the
+cloud embedder became the accounted one on the raw client; token ids before that. That is not a
+limitation to apologise for --
 it makes the stub a **chance baseline**, and the baseline is what stops this measurement being
 worthless. If the hashing embedder and a deliberately random one score the same, the questions are
 answerable by anything and the hit rate measures nothing. Any real figure for a cloud embedder
@@ -210,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         # a ledger nobody reads, but an uncharged call is refused rather than made for free.
         with charging(SpendLedger(settings, Ceilings.for_run(settings))):
             provider_cost = time_build(
-                "OpenAIEmbeddings -> stub (real HTTP)", provider, chunks, stub.behaviour
+                "AccountedEmbeddings -> stub (HTTP)", provider, chunks, stub.behaviour
             )
             provider_quality = measure_quality("stub (chance baseline)", provider, chunks)
 
@@ -222,7 +224,9 @@ def main(argv: list[str] | None = None) -> int:
     ratio = provider_cost.seconds / hashing_cost.seconds if hashing_cost.seconds else float("nan")
     print(f"\n  The provider path is {ratio:.1f}x the in-process one against a loopback stub,")
     print("  which excludes provider latency entirely. A real endpoint adds a round trip per")
-    print("  call, so treat this as the floor and not the figure.\n")
+    print("  call, so treat this as the floor and not the figure. At this corpus size both are")
+    print("  a few milliseconds and vary run to run by as much as they differ, so the ratio is")
+    print("  not a ranking.\n")
 
     # ------------------------------------------------------------------ quality
     print("  RETRIEVAL QUALITY\n")
@@ -256,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     # ----------------------------------------------------- what it does and does not say
     print(
         "\n  The baseline column is a deliberately meaningless embedder: the stub returns a hash\n"
-        "  of the token ids it was sent. It is here because it is the control. If it scored as\n"
+        "  of the text it was sent. It is here because it is the control. If it scored as\n"
         "  well as the hashing embedder, these questions would be answerable by anything and the\n"
         "  hit rate above would measure nothing.\n"
     )
