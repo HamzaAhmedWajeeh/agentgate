@@ -138,12 +138,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   19,200, from a measured heaviest run of 1,920 tokens at the fan-out limit. Spend ceilings
   follow. The Phase 3 note predicted the old ceiling would reject every Phase 4 run; it would
   not have, and what it recorded instead is in `.env.example`.
-- Embedding spend goes through the ledger, on the same three rules as a chat call: a response
-  with no usage is an error rather than a zero, an unpriced embedding model refuses to start,
-  and spend is recorded per model. Checked after every batch, so a runaway index trips the
-  ceiling while it runs rather than reporting the bill afterwards. **The run budget means all
-  spend, not chat spend** — ADR 0004 item 9 is closed with the decision and the reasoning, not
-  just the change.
+- `AccountedEmbeddings`, which books embedding calls into the ledger on the same three rules as a
+  chat call: a response with no usage is an error rather than a zero, an unpriced embedding model
+  refuses to start, and spend is recorded per model. Checked after every batch, so a runaway
+  index would trip the ceiling while it runs rather than reporting the bill afterwards. **The run
+  budget means all spend, not chat spend** — the decision is recorded in ADR 0004 item 9.
+  **Nothing constructs it**, so embedding spend is not accounted: this entry said it was until
+  ADR 0004 item 20, and item 9 is reopened as item 19.
 - Recorded: `langchain_openai.OpenAIEmbeddings` discards the `usage` block the API returns,
   which is the one field the budget depends on, so the embedding call goes through the provider
   client directly. ADR 0004, item 11.
@@ -200,6 +201,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Retrieval embeds on the most contained lane the deployment can reach**, so on a hybrid
+  deployment neither a restricted request's research queries nor the corpus reach the third party.
+  `build_embeddings` reads `most_contained_lane` -- the rule classification already uses -- instead
+  of the configured default. One index, no routing inside retrieval, no new setting. The cost is
+  retrieval quality on every request, public ones included: 90% top-4 against a 20% chance floor,
+  measured on this 20-chunk corpus at 301 distinct terms and not beyond it. A cloud-only deployment
+  still embeds on the cloud, and is pinned as documented egress. ADR 0004 item 17, closed for hybrid
+  deployments; the test that asserted the leak happened now asserts its absence.
+- **The README said embedding spend was accounted and chat spend was the half left to wire.**
+  Neither is accounted: `AccountedEmbeddings` is constructed by nothing and no chat call reaches
+  the ledger. The same claim was in ADR 0004's gaps table, `accounting.py`'s docstring and the
+  item 9 entry above; each is corrected in place, and item 19's correction had been sitting three
+  paragraphs below the claim it contradicts. ADR 0004 item 20.
 - **The CLI printed a readable message and then eighty-eight lines of traceback**, exiting 1 rather
   than the 2 its handler claimed. `typer.Exit` raised outside the click invocation is an ordinary
   exception, and `main()`'s docstring said "reported, not traced" while both happened. Nothing
@@ -263,6 +277,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Settings.classification_lane` is renamed `most_contained_lane`. Classification runs on it and
+  retrieval now embeds on it, so a name for one caller was already wrong. No behaviour change.
 - `SpendLedger` requires the ceilings it enforces rather than reading the run ceilings off
   configuration. A ledger that inferred its own scope is how the live suite came to be
   measured against a per-run budget. See item 8 of the leak inventory in ADR 0004.

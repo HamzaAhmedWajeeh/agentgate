@@ -652,14 +652,17 @@ class Settings(BaseSettings):
         return frozenset(lanes)
 
     @property
-    def classification_lane(self) -> Lane:
-        """Where a request is sent to be classified, before any policy decision exists.
+    def most_contained_lane(self) -> Lane:
+        """The most contained lane this deployment can reach.
 
-        The most contained lane this deployment can reach, which is the only answer available:
-        classification runs before the router, so there is no routed lane to honour and the
-        request has not yet been judged. Treating it as maximally sensitive until something has
-        looked at it is the same fail-closed reading the router applies to an unclassified
-        request.
+        Named for the rule rather than a caller, because it has more than one: classification
+        runs on it, and retrieval embeds on it. It was ``classification_lane`` until the second
+        caller made that name wrong.
+
+        For classification it is the only answer available: classification runs before the
+        router, so there is no routed lane to honour and the request has not yet been judged.
+        Treating it as maximally sensitive until something has looked at it is the same
+        fail-closed reading the router applies to an unclassified request.
 
         What it resolves to, and none of these needed a new setting:
 
@@ -669,6 +672,11 @@ class Settings(BaseSettings):
           order to decide whether it was allowed to.
         - **cloud-only** deployment: cloud. There is nowhere else to send it, so the egress
           remains and is documented rather than closed. Leak inventory item 14.
+
+        **Retrieval embeds on it too** -- the corpus index and every research query -- which is
+        leak inventory item 17 closed on hybrid deployments and left open on cloud-only ones, for
+        the same reason as item 14. One rule for "the most contained lane", read by both, rather
+        than a second answer that could drift from this one.
 
         Folded with :func:`narrower_of` rather than sorted, because that function is the one
         place the ordering is defined and commutativity is what makes the fold well defined

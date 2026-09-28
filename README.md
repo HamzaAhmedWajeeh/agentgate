@@ -43,7 +43,7 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
   and says so: that API exposes no pricing, and no price is ever inferred from a name.
 
 - The graph: classification, a policy gate that routes restricted content to the sovereign lane
-  **for its chat calls** -- see the retrieval caveat below, which is not a footnote,
+  -- see below for exactly what that is claimed to cover, which is not a footnote --
   research fanned out over a compiled retrieval subgraph, a drafting worker, and a human
   approval gate that pauses before anything irreversible. Rejection returns the draft for
   revision, and a reviewer who never approves is stopped by the iteration budget rather than by
@@ -64,22 +64,22 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
   the build.
 - An output check on citation provenance — every source the draft cites must be one research
   actually returned. Exact rather than heuristic, and it cannot see an uncited fabrication.
-- Embedding spend goes through the same ledger as chat spend, on the same rules: usage-or-error,
-  an unpriced model refuses to start, recorded per model.
 
 **Not built.** Long-term memory and time travel, the FastAPI and CLI surfaces, streaming,
 structlog/OpenTelemetry/Prometheus instrumentation, and the eval suite. `docs/concept-map.md`
 lists every concept and marks each one built or not built; a row there describes the repository
 as it is today.
 
-**Built but not yet wired.** The spend ledger enforces run and session ceilings, and the
-embedding path accounts against it, but the chat calls in the graph do not yet. Until they do,
-the run and session ceilings bound embedding spend and what `make measure` derives, not what a
-run's model calls actually consume.
+**Built but not yet wired.** The spend ledger enforces run and session ceilings, and nothing in
+the graph accounts against it -- not the chat calls, and not the embedding path either. Until
+something does, the run and session ceilings bound what `make measure` derives, not what a run
+actually spends.
 
 **Embedding spend is not accounted, and the row saying it was has been corrected.** Item 9 of
 that inventory recorded the gap as closed by `AccountedEmbeddings`. Nothing constructs it, so
-embedding spend is still invisible to every ceiling. Reopened as item 19.
+embedding spend is still invisible to every ceiling. Reopened as item 19. Until item 20 this
+README also said the opposite, three paragraphs earlier: that embedding spend went through the
+ledger and chat spend was the half left to wire.
 
 **Streamed calls report no token usage.** `langchain-openai` does not ask for it and the CLI is
 the only surface that streams, so every model call made through the command line is unmeasured.
@@ -95,15 +95,27 @@ request to the sovereign lane and no sovereign endpoint is configured, the run s
 alternative is serving it from the lane policy just ruled out, which is what used to happen and
 is ADR 0004 item 13.
 
-**The policy gate is enforced for chat calls, and not for retrieval.** What is pinned on the
-wire, against two stub endpoints with separate request logs: the drafter's synthesis call and the
-classifier's call both go to the lane the router chose. What is **not**: research queries. The
-embedder dispatches on the configured lane and never sees the route, so on a hybrid deployment a
-restricted request has its sub-questions -- and the whole corpus -- embedded by the third party.
-That is ADR 0004 item 17, it is **open**, and it is recorded by a test that asserts the egress
-happens rather than by a note somebody has to remember. **So this system does not claim that
-restricted content never reaches a cloud provider.** It claims that the chat calls go where policy
-sent them, and names the path that does not.
+**On a hybrid deployment, restricted content reaches no cloud provider through the chat calls or
+through retrieval.** That is the claim, and it is pinned on the wire against two stub endpoints
+with separate request logs, in a run as far as the approval gate. The chat calls are the
+classifier's, which runs on the most contained lane, and the drafter's, which runs on the lane the
+router chose (ADR 0004 items 14 and 13). Retrieval indexes the corpus and embeds every research
+query on the most contained lane -- in process, on a hybrid deployment -- so the cloud endpoint
+receives no embedding request at all, checked against the token ids the client actually sends
+rather than the raw body (item 17). Nothing broader is claimed:
+
+- **A cloud-only deployment** has nowhere more contained to go. It classifies on the cloud, and it
+  indexes the corpus and embeds public sub-questions there. It refuses a restricted request
+  rather than serving it from the cloud.
+- **The price is retrieval quality on every request**, public ones included, because one index
+  serves every route: a hybrid deployment searches a bag-of-words index even for a request drafted
+  in the cloud. Measured at 90% top-4 against a 20% chance floor -- on this 20-chunk corpus, at 301
+  distinct terms, and not beyond it. A corpus an order of magnitude larger has to be re-measured.
+- **Past the approval gate is not pinned.** A rejected draft is revised on the same routed lane,
+  and no wire test follows it there.
+- **Still open**: no retries or fallbacks on any lane (item 15), the routed tier is not applied
+  (item 16), streamed calls report no usage (item 18), and embedding spend is accounted by nothing
+  on the one deployment that still has any (item 19).
 
 **Classification runs on the most contained lane available, which on a cloud-only deployment is
 the cloud.** The raw request is shown to the third party in order to decide whether it was
@@ -114,10 +126,10 @@ lane is not claimed: a classifier that cannot produce a verdict fails closed to 
 the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
 
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — nineteen entries, each
-established by running something rather than by reading it, each pinned by a test. Two of them are
-corrections to earlier rows in the same document: item 19 reopens item 9, which said *closed* and
-was not. It says
+an inventory of every place something claimed one thing and did another — twenty entries, each
+established by running something or by checking a claim against what calls it. Two of them are
+corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed* and
+was not, and item 20 corrects this README, which said embedding spend was accounted. It says
 plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
 exercised. It is the most honest document here.
 
