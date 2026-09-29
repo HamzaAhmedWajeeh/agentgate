@@ -44,7 +44,17 @@ PATHISH = re.compile(r"^[\w./-]+\.(py|md)(:[\w.]+)?$")
 
 MINIMUM_BUILT = 40
 MINIMUM_NOT_BUILT = 8
-MINIMUM_NOT_WIRED = 2
+
+MINIMUM_NOT_WIRED = 1
+"""One, because closing leak inventory item 15 wired the two rows that made it two.
+
+These floors exist to catch a parser or a wording drift that would leave a filter empty and
+every assertion below it reading nothing. A floor that a real, correct change has to lower is
+doing its job -- it is the reason anyone looked. It must never reach zero: at zero the
+built-not-wired checks stop asserting anything at all, and the status would rot back into the
+comfortable direction that produced item 15 in the first place. If the last such row is ever
+wired, delete the checks rather than let them pass over an empty list.
+"""
 
 
 class Row:

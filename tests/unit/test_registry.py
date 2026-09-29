@@ -249,7 +249,7 @@ def test_the_route_cannot_widen_the_configured_lane() -> None:
 
 
 def test_the_resilient_chain_builds_on_the_fake_lane() -> None:
-    chain = build_resilient_model(build(), CallClass.RESEARCH)
+    chain = build_resilient_model(build(), Tier.CAPABLE, CallClass.RESEARCH)
 
     assert chain is not None
     assert hasattr(chain, "invoke")

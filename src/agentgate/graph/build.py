@@ -48,7 +48,7 @@ from agentgate.graph.subgraphs.retrieval import (
 )
 from agentgate.guardrails.run_ledger import RUN_LEDGER
 from agentgate.guardrails.spend import Ceilings, SpendLedger
-from agentgate.models.registry import ModelFactory, build_model
+from agentgate.models.registry import ModelFactory, build_resilient_model
 from agentgate.retrieval.index import build_retriever
 
 
@@ -73,7 +73,7 @@ def build_graph(  # noqa: PLR0913 - each factory is an injection point a test ne
     settings: Settings,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     *,
-    model_factory: ModelFactory = build_model,
+    model_factory: ModelFactory = build_resilient_model,
     interrupt_before: Sequence[str] | None = None,
     retriever_factory: RetrieverFactory = build_retriever,
     effect_sink_factory: Callable[[Settings], EffectSink] = build_effect_sink,

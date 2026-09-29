@@ -23,13 +23,12 @@ from enum import StrEnum
 from typing import Final, Protocol
 
 from langchain.chat_models import init_chat_model
-from langchain_core.language_models import BaseChatModel, LanguageModelInput
-from langchain_core.messages import AIMessage
-from langchain_core.runnables import Runnable
+from langchain_core.language_models import BaseChatModel
 
 from agentgate.config import CallClass, Lane, Settings, Tier, narrower_of
 from agentgate.errors import AgentgateError
 from agentgate.models.fake import FakeChatModel
+from agentgate.models.resilient import ResilientChatModel
 
 
 class LaneUnavailableError(AgentgateError):
@@ -198,7 +197,7 @@ class ModelFactory(Protocol):
     """How a node obtains a model.
 
     Exists so a test can script the model a node will use without patching a global or
-    reaching inside the node. The default is :func:`build_model`; the fake lane needs
+    reaching inside the node. The default is :func:`build_resilient_model`; the fake lane needs
     scripting because an unscripted reply is a hash, which is not valid JSON -- and a
     classifier that cannot parse its own model's output fails closed to `restricted`, which
     would make every test look like a policy test.
@@ -310,10 +309,11 @@ def _init_openai_compatible(
         temperature=settings.temperature,
         max_tokens=max_tokens,
         timeout=settings.request_timeout_seconds,
-        # Zero, and nothing adds them back. `build_resilient_model` would, and no node calls
-        # it -- so this system performs no retries at all, on any lane. The comment here used to
-        # say retries were applied there "in one place", which was true about the design and
-        # false about the running system for four phases. Leak inventory item 15.
+        # Zero here, and added back in exactly one place: `build_resilient_model`, which is the
+        # factory the graph injects into every model-calling node. Keeping the client at zero is
+        # what makes that single place true -- two retry mechanisms would multiply, and the
+        # provider's own retries are invisible to the ledger. This comment claimed the same thing
+        # for four phases while nothing called the factory at all: leak inventory item 15.
         max_retries=0,
         # Ask for the usage block on streamed calls too. Without it a streamed OpenAI response
         # carries no token counts, and the CLI streams every call -- so with chat spend accounted,
@@ -327,11 +327,12 @@ def _init_openai_compatible(
 
 def build_resilient_model(
     settings: Settings,
+    tier: Tier,
     call_class: CallClass,
     *,
     lane: Lane | None = None,
-) -> Runnable[LanguageModelInput, AIMessage]:
-    """The capable tier, retried, falling back to the cheap tier, then failing clearly.
+) -> BaseChatModel:
+    """A tier, retried, falling back to the cheap tier, then failing clearly.
 
     Retry handles the transient case -- a reset connection, a rate limit -- where the same
     request will probably work in a moment. Fallback handles the durable case, where this
@@ -340,13 +341,30 @@ def build_resilient_model(
     Both tiers commonly resolve to the same model, in which case the fallback is a second
     attempt with fresh state rather than a downgrade. That is still worth having, and it
     costs nothing when the first attempt succeeds.
+
+    The signature is :class:`ModelFactory`'s, deliberately: this is the factory the graph
+    injects, so a node asks for a tier and gets a resilient model without knowing it. The
+    cheap tier gets retries and no fallback, because the only thing below it is the capable
+    tier and falling back *up* is an escalation in cost rather than a degradation in quality.
+
+    **The lane cannot widen.** ``lane`` is passed once, and both leaves reach it through
+    :func:`build_model`, which narrows it against the deployment with ``narrower_of``. There is
+    no second lane decision here on purpose -- see :mod:`agentgate.models.resilient`. A fallback
+    that crossed to a less contained lane would be leak-inventory item 13 triggered by an
+    outage, which is the one trigger nobody is watching for.
+
+    Args:
+        settings: Resolved configuration.
+        tier: The tier the caller asked for. Retries happen on this one.
+        call_class: Determines the output ceiling, and applies to both leaves.
+        lane: What the policy router decided this request may reach.
     """
-    capable = build_model(settings, Tier.CAPABLE, call_class, lane=lane).with_retry(
-        stop_after_attempt=settings.max_retries + 1,
-        wait_exponential_jitter=True,
+    primary = build_model(settings, tier, call_class, lane=lane)
+    fallback = (
+        build_model(settings, Tier.CHEAP, call_class, lane=lane) if tier is not Tier.CHEAP else None
     )
-    cheap = build_model(settings, Tier.CHEAP, call_class, lane=lane).with_retry(
-        stop_after_attempt=settings.max_retries + 1,
-        wait_exponential_jitter=True,
+    return ResilientChatModel(
+        primary=primary,
+        fallback=fallback,
+        max_attempts=settings.max_retries + 1,
     )
-    return capable.with_fallbacks([cheap])
