@@ -5,7 +5,7 @@ written down somewhere better:
 
 | Looking for | Read |
 | --- | --- |
-| Where something claimed one thing and did another | `docs/adr/0004-provider-abstraction-and-lanes.md` — the leak inventory, 26 rows |
+| Where something claimed one thing and did another | `docs/adr/0004-provider-abstraction-and-lanes.md` — the leak inventory, 27 rows |
 | Whether a concept is built | `docs/concept-map.md` — three statuses, all enforced by `tests/unit/test_concept_map.py` |
 | What changed and why | `CHANGELOG.md` |
 | Why a design is the way it is | `docs/adr/` |

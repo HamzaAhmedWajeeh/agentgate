@@ -111,10 +111,18 @@ decider is not injection-proof: it is shown the proposed actions, whose argument
 so a drafter talked into a proposal can still argue for it there. What bounds that is that it can
 never reject, shadow is the default, and the deterministic preconditions are checked in code first.
 
-**There are no retries and no fallbacks on any lane.** `build_resilient_model` composes both and
-is tested against a server returning real HTTP errors, and nothing in `src/` calls it. That is
-ADR 0004 item 15, and `docs/concept-map.md` marks both rows *built, not wired* — a status the
-suite enforces, so adding a caller fails the build until the row is corrected.
+**A fallback narrows the lane and never widens it.** Every model-calling node is handed
+`build_resilient_model`, so a transient failure is retried on the tier that failed and a durable
+one falls back to the cheap tier. Both leaves are built from one routed lane, so a sovereign
+endpoint that goes down is answered by the sovereign endpoint or by nothing — never by a third
+party. A run that cannot be served that way fails, which is the correct outcome: an outage is the
+one moment nobody is watching for a leak. Read off two endpoints' request logs in
+`tests/integration/test_resilience_wiring.py`.
+
+**Retries do not overrule the guards.** A ceiling crossed, a reply with no usage to account, a
+lane that cannot be built — these leave immediately rather than being retried as though they were
+the provider having a bad minute. That is ADR 0004 item 15, which stayed open for four phases
+because the code existed, was tested, and was called from nowhere.
 
 **A single-lane deployment cannot serve a restricted request.** If the policy gate routes a
 request to the sovereign lane and no sovereign endpoint is configured, the run stops. The
@@ -139,8 +147,9 @@ client sends -- token ids or strings -- rather than a grep of the raw body (item
   distinct terms, and not beyond it. A corpus an order of magnitude larger has to be re-measured.
 - **Past the approval gate is not pinned.** A rejected draft is revised on the same routed lane,
   and no wire test follows it there.
-- **Still open**: no retries or fallbacks on any lane (item 15), and the routed tier is not
-  applied (item 16).
+- **Still open**: the routed tier is not applied (item 16), so a request the router sent to the
+  cheap tier is drafted by the capable one. Invisible in the reference configuration, where both
+  cloud tiers name the same model.
 
 **Classification runs on the most contained lane available, which on a cloud-only deployment is
 the cloud.** The raw request is shown to the third party in order to decide whether it was
@@ -151,12 +160,13 @@ lane is not claimed: a classifier that cannot produce a verdict fails closed to 
 the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
 
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — twenty-six entries,
+an inventory of every place something claimed one thing and did another — twenty-seven entries,
 each established by running something or by checking a claim against what calls it. Two of them
 are corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed*
 and was not, and item 20 corrects this README, which said embedding spend was accounted. Items 22
 and 23 were found by the run ledger itself, the first time anything counted requests against the
-book.
+book. Item 27 was found by wiring item 15: a retry policy that had been retrying this system's
+own refusals for four phases, in code nothing called, where it could not fail.
 It says
 plainly that it is incomplete, and that the leaks not yet found are the ones nothing has
 exercised. It is the most honest document here.

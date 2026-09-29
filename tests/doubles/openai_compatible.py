@@ -44,7 +44,7 @@ import math
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -78,6 +78,12 @@ class StubBehaviour:
             the retry chain against real HTTP errors rather than synthetic exceptions.
         status_for_failures: Status code used for those rejections. 429 exercises rate-limit
             handling; 500 exercises a generic server fault.
+        reject: Asked about every chat request, after ``fail_first_n`` has had its say. Return
+            ``True`` to reject it. ``fail_first_n`` can only express "the first few", which is
+            the wrong shape for an outage confined to one tier or starting part-way through a
+            run -- and those are exactly the conditions a fallback exists for. A predicate that
+            reads the request body can say "the capable tier is down and the cheap one is up",
+            which is what testing a *fallback* rather than a *retry* requires.
         supports_native_structured_output: Left as ``False`` for the sovereign stand-in. Set
             ``True`` only to demonstrate the contrast between lanes.
     """
@@ -85,6 +91,7 @@ class StubBehaviour:
     reply: dict[str, Any] = field(default_factory=lambda: {"answer": "stub"})
     fail_first_n: int = 0
     status_for_failures: int = 500
+    reject: Callable[[dict[str, Any]], bool] | None = None
     supports_native_structured_output: bool = False
 
     requests_seen: list[dict[str, Any]] = field(default_factory=list)
@@ -184,7 +191,10 @@ def build_app(behaviour: StubBehaviour) -> FastAPI:
         body: dict[str, Any] = await request.json()
         behaviour.requests_seen.append(body)
 
-        if behaviour.request_count <= behaviour.fail_first_n:
+        rejected = behaviour.request_count <= behaviour.fail_first_n or (
+            behaviour.reject is not None and behaviour.reject(body)
+        )
+        if rejected:
             return JSONResponse(
                 status_code=behaviour.status_for_failures,
                 content={

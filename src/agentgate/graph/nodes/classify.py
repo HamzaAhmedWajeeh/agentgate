@@ -31,7 +31,7 @@ from agentgate.audit.events import Decided, audit_event, digest
 from agentgate.config import CallClass, Settings, Tier
 from agentgate.graph.state import AgentState, Classification, Complexity, Sensitivity
 from agentgate.guardrails.run_ledger import accounted, ledger_of
-from agentgate.models.registry import Capability, ModelFactory, build_model, supports
+from agentgate.models.registry import Capability, ModelFactory, build_resilient_model, supports
 from agentgate.models.structured import StructuredOutputError, invoke_structured
 
 NODE = "classify"
@@ -60,7 +60,7 @@ def classify(
     state: AgentState,
     settings: Settings,
     config: RunnableConfig,
-    model_factory: ModelFactory = build_model,
+    model_factory: ModelFactory = build_resilient_model,
 ) -> AgentState:
     """Classify the request and record the decision.
 

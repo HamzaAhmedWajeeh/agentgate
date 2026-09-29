@@ -15,9 +15,11 @@ commitment.
 the system. *not built* means it is absent. **built, not wired** means the code exists and is
 tested and **nothing in `src/` calls it** -- so it is not behaviour this system has, however
 green its tests are. `with_retry` and `with_fallbacks` sat at *done* for four phases on the
-strength of `build_resilient_model`, which no node has ever called; leak inventory item 15. The
-status is enforced the same way the other two are: a *built, not wired* row whose symbol gains a
-caller anywhere in `src/` fails the build until someone moves the row.
+strength of `build_resilient_model`, which no node called; leak inventory item 15, closed now
+that the factory is the one every model-calling node is given. The status is enforced the same
+way the other two are: a *built, not wired* row whose symbol gains a caller anywhere in `src/`
+fails the build until someone moves the row -- which is what happened here, and the row moved
+only once a test read the retry off an endpoint's request log.
 
 ---
 
@@ -77,9 +79,10 @@ caller anywhere in `src/` fails the build until someone moves the row.
 | Validate-and-repair structured output fallback | **done** | `models/structured.py:invoke_with_repair` |
 | ↳ its test, against a lane that really lacks native support | **done** | `tests/integration/test_sovereign_lane_structured_output.py::test_repair_loop_rescues_prose_wrapped_json_from_the_sovereign_lane` |
 | ↳ the leak it exists for, demonstrated | **done** | same file, `::test_native_structured_output_fails_against_the_sovereign_lane` |
-| `with_retry` | **built, not wired** | `models/registry.py:build_resilient_model` |
-| `with_fallbacks` | **built, not wired** | `models/registry.py:build_resilient_model` |
+| `with_retry` | **done** | `models/resilient.py:ResilientChatModel`, built by `models/registry.py:build_resilient_model` — the factory every model-calling node is given |
+| `with_fallbacks` | **done** | same, one tier down and never a lane out |
 | ↳ tested against induced HTTP failures | **done** | `tests/integration/test_resilience.py` |
+| ↳ reached by a node, read off an endpoint | **done** | `tests/integration/test_resilience_wiring.py` |
 | `@tool` with Pydantic arg schemas | **done** | `tools/registry.py` |
 | Tools bound to the model | **done** | `graph/nodes/drafter.py` via `tools_for(Agent.DRAFTER)` |
 | `ToolNode` execution | not built | `create_agent` runs the tool loop internally; no explicit `ToolNode` in this repository |

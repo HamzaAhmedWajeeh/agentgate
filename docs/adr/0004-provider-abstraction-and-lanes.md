@@ -234,7 +234,7 @@ live suite now enforces it. The gap closed the way every gap here is meant to: b
 
 **A test fixture was wrong in a way only the trail assertion could catch.** With classification moved to the sovereign lane, the stub on that lane was still replying with a draft, so the classifier failed to parse it and fell closed to `restricted` -- the same destination the test was checking for, reached without a verdict ever being parsed. The test now asserts `classification_failed is None`, so the routing under test has to come from a classification rather than from the fail-closed branch. Worth recording because it is the third time in this repository a guard has passed for a reason unrelated to what it claimed.
 
-### 15. `with_retry` and `with_fallbacks` are tested and unreachable
+### 15. `with_retry` and `with_fallbacks` are tested and unreachable — CLOSED
 
 | | |
 | --- | --- |
@@ -242,9 +242,47 @@ live suite now enforces it. The gap closed the way every gap here is meant to: b
 | **How established** | `grep -rn build_resilient_model src/` returns one hit: the comment asserting where retries happen. Found while tracing which code paths a routed lane had to reach, not by a failing test -- nothing was looking, because the tests that cover it construct it themselves. |
 | **Evidence** | `docs/concept-map.md` now carries a third status, **built, not wired**, and `tests/unit/test_concept_map.py::test_every_built_not_wired_row_exists_and_is_called_from_nowhere` enforces it in both directions: the symbol must exist, and no file in `src/` other than the one defining it may mention it. Adding an import of `build_resilient_model` to any node turns that test red. |
 | **Consequence** | Same shape as item 13 and worth stating as a general rule: **a function tested in isolation is evidence about the function, not about the system.** The concept map said *done* for four phases on the strength of a green test file. The row now says what is true, and the status is enforced rather than asserted, so the map cannot rot in the comfortable direction again. |
-| **Deliberately not wired here** | Wiring it is a behaviour change to every model call and belongs in its own change. **The constraint for whoever does it: a fallback must never cross to a less contained lane.** `build_resilient_model` already threads `lane` into both tiers, and `narrower_of` makes the widening case impossible at construction -- but a fallback chain assembled per lane is a new place for the same mistake, and the guard it needs is the one from item 13: two endpoints, and an assertion that the fallback never appears in the wrong request log. |
 | **Recorded** | Here, in the corrected comment in `models/registry.py:_init_openai_compatible`, and in the concept map's status legend. |
-| **Closed by** | Nothing. The row is the record; the fix is not in this change. |
+| **Closed by** | `models/resilient.py:ResilientChatModel`, built by `build_resilient_model`, which is now the `ModelFactory` every model-calling node is given -- `classify`, `draft`, and the LLM decider. Pinned by `tests/integration/test_resilience_wiring.py`, which builds nothing itself: it starts runs through `build_graph` and reads endpoints' request logs, so only a node reaching the resilient path can make it pass. |
+
+**What it cost, 2026-09-29.**
+
+*A `Runnable` was the wrong return type, and that was the whole difficulty.* `with_retry` and
+`with_fallbacks` compose a `Runnable`; `create_agent` takes `str | BaseChatModel` and calls
+`bind_tools` on it. It accepts a `RunnableWithFallbacks` at construction and fails at the first
+invocation with `'RunnableRetry' object has no attribute 'bind_tools'` -- so the drafter, the
+most expensive call in the system and the one with the most to gain from a fallback, could not
+be handed the composed chain at all. Wiring therefore meant re-expressing retry and fallback as
+a chat model rather than swapping a default. `ResilientChatModel` is that, and it is the cost of
+this row: a class the repository now maintains, where before there were two library calls.
+
+*Two defects were in the unwired code, and only wiring could find them.* Both would have shipped
+the day anything called it:
+
+- **A retry overruled the spend ceiling.** Its own row: **item 27**, which has the figures, the
+  pins and the rule. It belongs there rather than here because it is not a cost of wiring -- it
+  is a defect wiring *found*, and it would have been a defect the day anything called this code.
+- **The fallback would have been billed to the wrong model.** `accounted` attached the ledger
+  callback to whatever model it was given. On a composite that is one callback for the whole
+  chain, reading the *primary's* identifier out of its own metadata -- so a reply the cheap
+  fallback produced during an outage would have been priced at capable-tier rates, silently, and
+  only ever during an outage. Same shape as item 11. `accounted` now pushes the callback down
+  into the leaves, so each attempt that reaches a provider bills itself under the name of the
+  model that answered it.
+
+*The lane constraint cost nothing, because it was not re-decided.* Both leaves are built from one
+`lane` argument, each through `build_model`, so they reach `narrower_of` separately and resolve
+to the same lane by construction. There is no second answer to "which lane is more contained" in
+the resilient path, which is the whole reason it cannot widen one.
+`test_an_exhausted_sovereign_lane_never_falls_back_to_the_cloud_endpoint` is the item 13 guard
+asked in the outage direction: the sovereign endpoint answers the classifier and then goes down,
+the drafter spends every attempt it has on it, the run fails -- and the cloud endpoint's log is
+empty. The presence half is the drafter's restricted findings arriving at the sovereign endpoint,
+so the absence is about a run that had something to leak.
+
+*A cost that is not paid here.* The cheap tier gets retries and no fallback, because the only
+thing below it is the capable tier and falling back *up* is an escalation in cost rather than a
+degradation in quality. So a classification failure that outlasts its retries still ends the run.
 
 ### 16. The routed tier never reached model construction either
 
@@ -402,6 +440,19 @@ that provokes it, not to add a defensive branch.
 | **Moved with the topology** | The assess node (Part B, B5) sits between the supervisor and the gate with a static edge *into* the gate. An update with no node named is now credited to `assess`, so the run no longer ends: the gate runs again over the changed state and the pending resume applies to that fresh pass. The approval hash is what keeps it safe -- an approval carrying the hash of what was shown no longer matches and is refused. The behaviour moved; the guarantee did not, and both are pinned: `::test_in_agentgate_an_unnamed_update_re_enters_the_gate_and_a_stale_approval_is_refused` and `::test_in_agentgate_an_approval_written_as_the_gate_ends_the_run_and_reaches_nothing`. Found because the pin written before B5 failed the moment the two met. |
 | **Recorded** | Here, in the test, and in item 24's tampering test, which explains why it writes as the drafter. Version-specific: re-check on a `langgraph` upgrade. |
 | **Closed by** | Nothing to close in this code. Pinned so that a topology change, or an upgrade that changes the behaviour, is visible. |
+
+
+### 27. A retry policy retries this system's own refusals -- CLOSED
+
+| | |
+| --- | --- |
+| **Difference** | `with_retry` retries on **every** exception by default, and this system raises its refusals as exceptions: a crossed spend ceiling, a reply with no usage to account, a lane that cannot be built. The ledger raises `SpendCeilingExceededError` from inside the callback of the call that crossed the ceiling, so to that policy it is indistinguishable from a 500. **The answer to a budget guard was four more billed calls** -- three attempts on the capable tier and one on the fallback, every one of them a real request made after the run had already decided to stop. A ceiling that a retry can walk past is not a ceiling. |
+| **How established** | Not by reading. `tests/integration/test_run_ledger.py::test_the_ceiling_trips_at_classification_and_nothing_follows` and `::test_the_ceiling_trips_inside_the_drafter_loop` went red the moment `build_resilient_model` became the factory the graph injects, and the captured log said it plainly: *run consumed 2627 tokens, over the ceiling of 2029*, then 3225, then 3823, then 4421. The second test asserted one capable-tier call and counted three. |
+| **Latent for four phases** | The defect was in `build_resilient_model` from the day it was written. It could not fail, because **nothing called it** -- item 15. Its own test file constructs the chain itself and never involves a ledger, so the retry policy was exercised for four phases without once meeting a guard. This is the item 15 lesson with the arrow reversed: *a function tested in isolation is evidence about the function, not about the system* also means an unwired component's defects are not dormant, they are unobservable. **Only wiring could find this**, and wiring found it in the first full test run. |
+| **Evidence** | `tests/unit/test_resilient_model.py` pins the rule rather than the instance: a refusal is attempted once and never answered by the fallback, on both the invoke and the streaming path, each paired with a control showing a provider failure on the same chain *is* retried and *does* fall back -- without which every assertion holds equally against a chain that retries nothing. `tests/integration/test_resilience_wiring.py::test_a_ceiling_crossed_is_not_retried_past` pins it end to end through the graph: ceiling of one token, exactly one request reaches the endpoint. Mutation-checked by removing the re-raise from each attempt loop separately, since `_generate` and `_stream` carry one each and a fix in one of them is not a fix. |
+| **Consequence** | **A guard is not a transient fault.** Nothing deriving from `AgentgateError` is retried; it leaves the chain immediately, by the same path whether the primary or the fallback raised it. The fallback half matters as much as the retry half: a guard that stopped the capable tier and let the cheap one answer would have been overruled more quietly still, with the run carrying on past a ceiling that had already tripped, on a model nobody chose. The rule generalises to any guard added later rather than being a special case for the ledger. |
+| **Recorded** | Here, in `models/resilient.py`'s module docstring, and in both pins. |
+| **Closed by** | The `except AgentgateError: raise` clause at the head of both attempt loops in `models/resilient.py`, landed with the item 15 wiring. |
 
 ## Closing item 17: the index is the hard part
 

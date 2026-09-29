@@ -39,6 +39,7 @@ from langchain_core.outputs import ChatGeneration, LLMResult
 
 from agentgate.errors import AgentgateError
 from agentgate.guardrails.spend import MissingUsageError, SpendLedger, usage_of
+from agentgate.models.resilient import ResilientChatModel
 
 RUN_LEDGER: Final = "run_ledger"
 """The ``configurable`` key the run's ledger travels under."""
@@ -111,7 +112,24 @@ class LedgerCallback(BaseCallbackHandler):
 
 
 def accounted(model: BaseChatModel, ledger: SpendLedger) -> BaseChatModel:
-    """The same model, charging ``ledger`` for every call it makes."""
+    """The same model, charging ``ledger`` for every call it makes.
+
+    A resilient model is accounted *through*, not around. Its leaves are the things that reach
+    a provider, so each of them carries the callback and the composite carries none. Attaching
+    it to the composite instead would record one call per ``invoke`` no matter how many
+    attempts it took, and would price every one of them under the primary's identifier -- so a
+    reply the cheap fallback produced during an outage would be billed at capable-tier rates.
+    That is the item 11 pattern again: the number the budget depends on, lost to a convenience.
+    """
+    if isinstance(model, ResilientChatModel):
+        return model.model_copy(
+            update={
+                "primary": accounted(model.primary, ledger),
+                "fallback": (
+                    accounted(model.fallback, ledger) if model.fallback is not None else None
+                ),
+            }
+        )
     existing = list(model.callbacks) if isinstance(model.callbacks, list) else []
     return model.model_copy(update={"callbacks": [*existing, LedgerCallback(ledger)]})
 

@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from agentgate.config import CallClass, DeciderBackend, Lane, Settings, Tier
 from agentgate.decider.assessment import QUESTIONS, ROUTE, Assessment
 from agentgate.guardrails.spend import MissingUsageError, SpendLedger, usage_of
-from agentgate.models.registry import ModelFactory, build_model
+from agentgate.models.registry import ModelFactory, build_resilient_model
 from agentgate.models.structured import invoke_with_repair
 
 
@@ -51,7 +51,11 @@ class LlmDecider:
     backend = DeciderBackend.LLM
 
     def __init__(
-        self, settings: Settings, ledger: SpendLedger, *, model_factory: ModelFactory = build_model
+        self,
+        settings: Settings,
+        ledger: SpendLedger,
+        *,
+        model_factory: ModelFactory = build_resilient_model,
     ) -> None:
         self.settings = settings
         self.ledger = ledger

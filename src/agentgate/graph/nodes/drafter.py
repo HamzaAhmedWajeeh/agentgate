@@ -33,7 +33,7 @@ from agentgate.graph.completeness import research_gaps
 from agentgate.graph.state import AgentState, findings_of, lane_of
 from agentgate.guardrails.output import check_provenance
 from agentgate.guardrails.run_ledger import accounted, ledger_of
-from agentgate.models.registry import Capability, ModelFactory, build_model, supports
+from agentgate.models.registry import Capability, ModelFactory, build_resilient_model, supports
 from agentgate.models.structured import extract_json_object
 from agentgate.tools.allowlist import AllowlistMiddleware
 from agentgate.tools.registry import Agent, tools_for
@@ -85,7 +85,7 @@ def draft(
     state: AgentState,
     settings: Settings,
     config: RunnableConfig,
-    model_factory: ModelFactory = build_model,
+    model_factory: ModelFactory = build_resilient_model,
 ) -> AgentState:
     """Produce a draft, and record what the agent's tools were allowed to do.
 
@@ -102,7 +102,7 @@ def draft(
     # trail and applied to nothing, so a request the router sent to the sovereign lane was
     # drafted by whichever provider the deployment happened to default to.
     #
-    # `narrower_of` is applied again here, rather than trusted to happen inside `build_model`,
+    # `narrower_of` is applied again here, rather than trusted to happen inside the factory,
     # because the effective lane is needed for the audit event too -- and an event describing a
     # lane the model was not built on would be the same defect wearing different clothes.
     routed = lane_of(state)

@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Retries and fallbacks, reaching an endpoint at last** (leak inventory item 15, closed).
+  `build_resilient_model` is now the model factory every model-calling node is given, so a
+  transient provider failure is retried on the tier that failed and a durable one falls back to
+  the cheap tier. It returns a `ResilientChatModel` rather than a composed `Runnable`, because
+  `create_agent` takes a `BaseChatModel` and calls `bind_tools` on it -- a composed chain is
+  accepted at construction and fails at the first invocation, which put the drafter out of reach.
+  **A fallback narrows the lane and never widens it:** both leaves are built from one routed lane
+  through `build_model`, so there is no second answer to which lane is more contained, and a
+  sovereign endpoint that goes down is answered by the sovereign endpoint or by nothing.
+  `tests/integration/test_resilience_wiring.py` reads all of it off two endpoints' request logs
+  rather than constructing a chain of its own.
+- A rejection predicate on the OpenAI-compatible stub, so a test can put one tier out of service
+  and leave the other healthy. `fail_first_n` can only express "the first few", which is the wrong
+  shape for the outage a fallback exists for.
+
+### Fixed
+
+- **A retry no longer overrules a guard** (leak inventory item 27, new and closed). `with_retry`
+  retries on every exception by default, and the run ledger raises its ceiling error from inside
+  the callback of the call that crossed it -- so a budget ceiling became four more billed calls
+  after the run was supposed to have stopped. Nothing deriving from `AgentgateError` is retried
+  now: it leaves the chain immediately, and the fallback is not offered it either. The defect was
+  in `build_resilient_model` from the day it was written and could not fail, because nothing
+  called it; the two ceiling tests in `tests/integration/test_run_ledger.py` went red in the first
+  full run after wiring. `tests/unit/test_resilient_model.py` pins the rule rather than the
+  ceiling, on both the invoke and the streaming path, each with a control showing a provider
+  failure on the same chain still is retried.
+- **The model that answered is the model that is billed.** `accounted` pushes the ledger callback
+  down into a resilient model's leaves instead of wrapping the composite. A callback on the
+  composite reads the primary's identifier from its own metadata, so a reply the cheap fallback
+  produced during an outage would have been priced at capable-tier rates, silently. Same shape as
+  item 11.
+
 - `env/sovereign.env` and `env/hybrid.env`: deployment examples with every setting stated -- no profile
   variable -- including the effect sink and outbox path. Secrets are left blank and model identifiers
   are placeholders; a test holds each file to the settings model and loads it once its secrets are
