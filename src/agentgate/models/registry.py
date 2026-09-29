@@ -343,9 +343,16 @@ def build_resilient_model(
     costs nothing when the first attempt succeeds.
 
     The signature is :class:`ModelFactory`'s, deliberately: this is the factory the graph
-    injects, so a node asks for a tier and gets a resilient model without knowing it. The
-    cheap tier gets retries and no fallback, because the only thing below it is the capable
-    tier and falling back *up* is an escalation in cost rather than a degradation in quality.
+    injects, so a node asks for a tier and gets a resilient model without knowing it.
+
+    **The cheap tier has no fallback, so that ``max_retries`` means retries.** The only call
+    that could sit beneath it is another call to the same model through the same connection
+    pool, which would make a cheap-routed request cost ``max_retries + 2`` provider calls --
+    two of them at ``max_retries=0``, where the operator asked for one. The capable tier keeps
+    its fallback because the call beneath it is a *different model*: a degradation rather than
+    a spare attempt. Escalating the cheap tier to the capable one was rejected outright; a
+    fallback that costs more on exhaustion fires exactly when nobody is watching. ADR 0004
+    item 16 has the measurement and the decision.
 
     **The lane cannot widen.** ``lane`` is passed once, and both leaves reach it through
     :func:`build_model`, which narrows it against the deployment with ``narrower_of``. There is

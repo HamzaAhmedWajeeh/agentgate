@@ -284,7 +284,7 @@ so the absence is about a run that had something to leak.
 thing below it is the capable tier and falling back *up* is an escalation in cost rather than a
 degradation in quality. So a classification failure that outlasts its retries still ends the run.
 
-### 16. The routed tier never reached model construction either
+### 16. The routed tier never reached model construction either -- CLOSED
 
 | | |
 | --- | --- |
@@ -292,9 +292,121 @@ degradation in quality. So a classification failure that outlasts its retries st
 | **How established** | Observed on the wire in the same two-endpoint harness. A public, simple request routes to `cloud_cheap`, the lane event records `tier: cheap`, and the cloud endpoint is asked for the **capable** model. |
 | **Evidence** | `tests/integration/test_routed_lane_enforcement.py::test_a_hybrid_deployment_still_uses_the_cloud_lane_for_public_content` asserts both halves as the current truth, so wiring the tier has to come through that line. `docs/concept-map.md` carries the row as *not built*. |
 | **Consequence** | Invisible in the reference configuration, because both cloud tiers name the same model -- which is itself deliberate and documented, the split being a policy boundary rather than a cost claim. That is exactly why it survived: the one deployment shape that would reveal it is the one nobody runs. |
-| **Deliberately not fixed here** | It needs a `tier` channel in `AgentState`, which is a schema change and a checkpoint-compatibility question, and it is a cost decision rather than a containment one. Item 13 was neither. |
 | **Recorded** | Here and in the concept map. |
-| **Closed by** | Nothing yet. |
+| **Closed by** | A `tier` channel in `AgentState`, written by `bind_lane` beside the lane it already wrote, read by `graph/nodes/drafter.py` through `state.py:tier_of`. Pinned by `tests/integration/test_routed_tier.py`, which gives the two cloud tiers different identifiers and reads which one the endpoint was asked for -- the same trick item 13 needed, for the same reason. |
+
+**The decisions, 2026-09-29.**
+
+*An absent channel reads as `CAPABLE`.* A checkpoint written before the channel existed resumes
+exactly as it would have, and the one direction this default can be wrong in is **more
+expensive, never worse**. `tier_of` deliberately does not copy `lane_of`, which fails closed to
+`SOVEREIGN`: containment has a safe direction and cost does not. Defaulting to the cheap tier
+would let a run paused at the gate come back, after a rejection, with a weaker answer than the
+one the reviewer was looking at -- and nothing in the trail would show the downgrade, because
+the revision is simply the next draft. Re-deriving the tier from `classification` was rejected
+outright: that is a second home for the routing rule, which is the `narrower_of` mistake in new
+clothes.
+
+**What this default costs, stated exactly.** On a checkpoint written before the channel that
+carried a `cloud_cheap` route, **the trail and the behaviour disagree**: the lane event says
+`tier: cheap` and the resumed drafter asks for the capable model. That is real and it is not
+hidden. It is bounded to checkpoints written before this change -- any run started after it
+carries the channel, and the two agree for the rest of that run, because nothing edges back to
+`classify` or the lane nodes and the channel is therefore written once.
+
+*The cheap tier has no fallback, because a fallback there would make `max_retries` mean
+something other than what it says.* The only call that could sit beneath the cheap tier is
+another call to the same model, so a cheap-routed request would cost `max_retries + 2` provider
+calls. At `max_retries = 0` -- an operator saying *do not retry* -- that is two calls, the
+second one billed, on a request the deployment asked to have tried once. **That is a behaviour
+defect and not a vocabulary one**, and it is the reason for the decision. Pinned by
+`tests/integration/test_routed_tier.py::test_a_cheap_routed_request_makes_exactly_the_configured_number_of_calls`,
+parametrised over 0, 1 and 2, because a single case at 1 cannot tell "one retry and a fallback"
+from "two attempts and none", and 0 is the case that makes the point.
+
+**Cheap falling back to cheap was implemented first, then measured and removed.** The
+justification would have been "a second attempt with a fresh client, so a wedged connection pool
+is recovered". Measured on 2026-09-29, against `langchain-openai` 1.4.2, that is false here:
+`_get_default_httpx_client` is cached on base URL, timeout and socket options, so two leaves
+built from one `Settings` are two `ChatOpenAI` objects and two `openai.OpenAI` wrappers sharing
+**one httpx client and one connection pool** -- established by comparing
+`primary.root_client._client is fallback.root_client._client`, which is `True`. So it was one
+more attempt through the same transport, exactly equivalent to raising `max_retries` by one: a
+distinction without a difference. That measurement is recorded here as a dated fact rather than
+kept as a test, because a pin on a dependency's private attribute would go red on an upgrade for
+reasons that have nothing to do with this repository, and it would have existed only to defend a
+fallback that no longer exists. What is enforced instead is the shape --
+`tests/unit/test_registry.py::test_the_cheap_tier_has_no_fallback` -- and the call count on the
+wire.
+
+*Escalating the cheap tier to the capable one was rejected outright*, and separately: a fallback
+that costs more on exhaustion fires exactly when nobody is watching, and it would have arrived
+as a side effect of wiring a *cost* decision. The capable tier keeps its fallback because the
+call beneath it is a **different model** -- a degradation, not a spare attempt. The argument that
+the cheap tier should have one *for parity* with the capable tier is the argument that was
+rejected: there was never parity to lose, because what the capable chain has underneath it is a
+thing the cheap tier does not have a version of.
+
+**The composed consequence: a sovereign deployment has no working fallback on any request.**
+Three decisions meet, and the third is the one that makes it total. The sovereign lane binds the
+cheap tier, so restricted requests land there and the cheap tier has no fallback. A public,
+involved request routes to `cloud_capable` and `narrower_of` pulls it home, so it does reach the
+one tier that still has a fallback -- but `model_for` resolves both tiers of the sovereign lane
+to the single `sovereign_model`, so that fallback degrades to the same model through the same
+connection pool. **It is the distinction without a difference this row just removed from the
+cheap tier, surviving on the capable tier only because a one-model lane cannot show it.**
+Measured 2026-09-29: on `lane=sovereign`, `build_resilient_model(..., CAPABLE, ...)` yields
+`primary.model_name == fallback.model_name == sovereign_model` with one shared httpx client.
+
+So an air-gapped deployment gets `max_retries + 1` attempts and then the run fails. Failing is
+the intended outcome -- the alternative is a third party answering -- and it is stated in the
+README's limitations rather than only here, because it is a property of the configuration this
+project recommends for exactly that use.
+
+**Is that the end state?** No: it is correct while the sovereign lane has one model to name, and
+it should be revisited the moment it has two -- a `sovereign_capable_model` and a
+`sovereign_cheap_model` would make the capable tier's fallback real on that lane and would reopen
+the cheap tier's question on its own terms. **Genuinely undecided, and recorded as such:** whether
+an air-gapped operator wants a degradation step at all, or would rather a run fail cleanly than
+return a weaker answer from a smaller local model. Nobody has asked one, and this repository does
+not invent an answer it has not measured. The trigger for reopening is a second sovereign model
+identifier, not a preference.
+
+**Where the lane constraint is still observed.** Removing the cheap tier's fallback moved it.
+Only a `cloud_capable` route binds the tier that still has one, so a fallback and the sovereign
+lane now meet in exactly one shape: the sovereign-default deployment above, where `narrower_of`
+pulls a cloud-routed request home. Both leaves name the same model there, so it degrades to
+nothing -- but it is still a second model *construction*, and therefore still a second chance to
+pick the wrong lane, which is the property under test. That is where item 13's outage-direction
+guard now lives --
+`tests/integration/test_resilience_wiring.py::test_an_exhausted_fallback_never_crosses_to_the_cloud_endpoint`,
+which asserts the cloud lane was constructible before asserting nothing reached it, and goes red
+when `narrower_of` is removed from `build_model`. The older sovereign test kept its name and its
+job, which is that the *retry* chain stays on the endpoint the router chose.
+
+**The bet, stated as one.** This decision rests on a measurement of the deployment shapes that
+exist today, where both tiers of a lane share a base URL and a timeout and therefore a pool. If
+a distinct sovereign cheap model arrives, or per-tier base URLs do, cheap-to-cheap becomes a
+real fallback and this gets undone -- deliberately a bet on what is measured now rather than on
+what might be configured later, which is the same rule the capability matrix runs on.
+
+*Both drafter sites move together.* The audit `model_id` and the factory call read one `tier`
+local, once. Two reads is how a trail comes to name a model the endpoint was never asked for --
+item 13's half-fix, and the only way this change goes wrong without anything turning red. There
+is a mutation for each direction and a test for each:
+`::test_the_trail_names_the_model_that_actually_answered` compares the drafting event's model
+against the model on the wire, and goes red when either site moves alone.
+
+*A tier decision cannot widen a lane.* The tier is chosen inside a lane, and both leaves of the
+chain are built from the routed lane. `::test_no_tier_decision_widens_the_lane` spends a
+sovereign-routed cheap chain, retries and fallback, against a sovereign endpoint that is down,
+on a deployment where the cloud lane is reachable -- and the cloud endpoint's log is empty.
+
+*What the old checkpoint test cost to write.* It has to clear a channel on a run paused at the
+gate, and the first attempt did that with `as_node="drafter"`, which consumed the pause. **That
+is item 26, met in the wild for the second time**, and the account lives in that row rather than
+here -- including the part that matters to anyone writing a similar test, which is that the fix
+was the absence of `as_node` rather than a better value for it.
 
 ### 17. Retrieval embeds on the configured lane, ignoring the route — CLOSED on hybrid deployments
 
@@ -438,7 +550,9 @@ that provokes it, not to add a defensive branch.
 | **Evidence** | `tests/integration/test_toolchain_blind_spots.py::test_a_state_update_written_as_the_paused_node_walks_past_its_interrupt`, with `::test_without_the_update_the_same_resume_delivers_the_decision` as its control. `::test_in_agentgate_an_update_at_the_gate_ends_the_run_and_can_reach_nothing` pins why this graph survives, including an approval written *as the gate*. Mutation-checked: a static edge from `approval_gate` to `execute` turns that case red -- the approval walks through to `execute`. |
 | **Consequence** | This graph is safe because of topology, and now provably so: the approval gate leaves only by `Command`, with no static edge out, and `execute` re-checks the decision and the approval hash on its own. **The rule for anyone editing the graph:** an interrupting node must never gain a static successor that acts, or a state update can approve on a human's behalf. Tests that change state between a pause and a resume must write as a node *upstream* of the pause and route back through it -- which is what item 24's test now does -- or they are asserting about a run that ended. Same family as items 4, 22 and 25: a toolchain behaviour that is not an error. |
 | **Moved with the topology** | The assess node (Part B, B5) sits between the supervisor and the gate with a static edge *into* the gate. An update with no node named is now credited to `assess`, so the run no longer ends: the gate runs again over the changed state and the pending resume applies to that fresh pass. The approval hash is what keeps it safe -- an approval carrying the hash of what was shown no longer matches and is refused. The behaviour moved; the guarantee did not, and both are pinned: `::test_in_agentgate_an_unnamed_update_re_enters_the_gate_and_a_stale_approval_is_refused` and `::test_in_agentgate_an_approval_written_as_the_gate_ends_the_run_and_reaches_nothing`. Found because the pin written before B5 failed the moment the two met. |
-| **Recorded** | Here, in the test, and in item 24's tampering test, which explains why it writes as the drafter. Version-specific: re-check on a `langgraph` upgrade. |
+| **Met a second time, in the wild** | While writing item 16's old-checkpoint test, 2026-09-29. That test has to clear the `tier` channel on a run paused at the gate, and the first version wrote the update as `as_node="drafter"` -- an upstream node, which is what this row's own advice sounded like. It moved `next` from `('approval_gate',)` to `('supervisor',)`, **consuming the pause**: the resume re-entered the gate without drafting, and the assertion failed reporting that the revision never reached the drafter -- a message pointing at tiers, about a defect that had nothing to do with them. It cost a debugging round to find, and the diagnosis was the `next` tuple, not the test output. **The fix was the absence of `as_node`, not a different value for it.** With no node named the update is credited to the last writer, `assess`, whose static edge into the gate is what makes the pending resume apply to a fresh pass. The test now asserts `next == ("approval_gate",)` immediately after the update, so the trap cannot reappear silently; `tests/integration/test_routed_tier.py::test_a_checkpoint_written_before_the_channel_resumes_on_the_capable_tier`. |
+| **What the second occurrence changes** | The rule was written as "write as a node upstream of the pause and route back through it", and that phrasing is what led straight into the trap: `drafter` *is* upstream, and naming it still consumed the pause, because naming a node sets where the run continues from. The rule that actually holds is narrower and is now the one recorded: **a test changing state around a pause names no node at all.** Two occurrences is also the evidence that this is a property of the toolchain rather than a quirk of one test -- the first was found by an absence assertion passing for the wrong reason, the second by a presence assertion failing for the wrong reason, which are the two ways it can present. |
+| **Recorded** | Here, in the test, in item 24's tampering test, which explains why it writes as the drafter, and in item 16's old-checkpoint test, which explains why it names nothing. Version-specific: re-check on a `langgraph` upgrade. |
 | **Closed by** | Nothing to close in this code. Pinned so that a topology change, or an upgrade that changes the behaviour, is visible. |
 
 

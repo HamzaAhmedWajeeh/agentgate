@@ -119,6 +119,31 @@ party. A run that cannot be served that way fails, which is the correct outcome:
 one moment nobody is watching for a leak. Read off two endpoints' request logs in
 `tests/integration/test_resilience_wiring.py`.
 
+**A request routed to the cheap tier makes exactly `max_retries + 1` provider calls.** The cheap
+tier has no fallback, and that is so the setting means what it says: the only model beneath it is
+itself, so a fallback there would be one more billed call — two at `max_retries = 0`, where the
+operator asked for one. The capable tier keeps its fallback because the call beneath it is a
+different model, which is a degradation rather than a spare attempt. Falling back *up* a tier was
+never on the table: a fallback that costs more on exhaustion fires when nobody is watching.
+ADR 0004 item 16, which records that cheap-to-cheap was built, measured and removed.
+
+**A sovereign deployment has no working fallback on any request. It makes `max_retries + 1`
+attempts and then the run fails.** This is the configuration recommended for air-gapped work, so
+it is worth stating where an operator will read it rather than only in an ADR. Three things
+compose to produce it, and none of them is wrong on its own:
+
+- the sovereign lane binds the **cheap** tier, so every restricted request is routed to it;
+- the cheap tier has no fallback, so that `max_retries` means retries (ADR 0004 item 16);
+- the sovereign lane has **one** model identifier for both tiers, so even the capable tier's
+  fallback — reached only by a public, involved request that `narrower_of` pulls home — degrades
+  to the same model through the same connection pool.
+
+So on that deployment the retry count is the whole of the resilience, and an endpoint that stays
+down for `max_retries + 1` attempts ends the run. **Failing is the intended outcome** — the
+alternative is a third party answering, which is the leak this project exists to prevent — but the
+absence of any degradation step is a property of the configuration, not an accident, and it is
+recorded as one.
+
 **Retries do not overrule the guards.** A ceiling crossed, a reply with no usage to account, a
 lane that cannot be built — these leave immediately rather than being retried as though they were
 the provider having a bad minute. That is ADR 0004 item 15, which stayed open for four phases
@@ -147,9 +172,12 @@ client sends -- token ids or strings -- rather than a grep of the raw body (item
   distinct terms, and not beyond it. A corpus an order of magnitude larger has to be re-measured.
 - **Past the approval gate is not pinned.** A rejected draft is revised on the same routed lane,
   and no wire test follows it there.
-- **Still open**: the routed tier is not applied (item 16), so a request the router sent to the
-  cheap tier is drafted by the capable one. Invisible in the reference configuration, where both
-  cloud tiers name the same model.
+- **A checkpoint written before the tier channel existed resumes on the capable tier**, which is
+  what every drafted request used before it. So the lane event on such a run can say `tier: cheap`
+  while the resumed drafter asks for the capable model. That is bounded to checkpoints written
+  before the change, and it is the deliberate direction: cost has no safe default the way
+  containment does, and resuming cheaper would answer a reviewer's rejection with a weaker draft
+  than the one they rejected.
 
 **Classification runs on the most contained lane available, which on a cloud-only deployment is
 the cloud.** The raw request is shown to the third party in order to decide whether it was

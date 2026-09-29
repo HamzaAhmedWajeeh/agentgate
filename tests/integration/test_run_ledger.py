@@ -43,7 +43,11 @@ CORPUS = Path(__file__).resolve().parents[2] / "corpus"
 
 PUBLIC_REQUEST = "Summarise our published refund window for the website."
 QUESTION = "What is the published refund window?"
-PUBLIC = {"sensitivity": "public", "complexity": "simple", "contains_pii": False, "reason": "t"}
+# Involved, so the router sends the draft to the capable tier and this file exercises both:
+# the classifier on cheap, the drafter on capable. Since leak inventory item 16 closed, a
+# *simple* public request is drafted on the cheap tier too -- which would leave every
+# per-model assertion below comparing one model against itself.
+PUBLIC = {"sensitivity": "public", "complexity": "involved", "contains_pii": False, "reason": "t"}
 
 
 @pytest.fixture

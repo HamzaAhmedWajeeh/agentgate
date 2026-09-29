@@ -268,3 +268,101 @@ def test_replace_keeps_observations_immutable() -> None:
 
     assert original.supported is False
     assert upgraded.supported is True
+
+
+def networked(**overrides: object) -> Settings:
+    """A configuration whose tiers build real clients rather than the fake lane."""
+    return build(
+        lane="cloud",
+        openai_api_key="not-required",
+        openai_base_url="http://127.0.0.1:1/v1",
+        cloud_capable_model="capable-stub",
+        cloud_cheap_model="cheap-stub",
+        model_prices_usd_per_million={
+            "capable-stub": {"input": 1.0, "output": 4.0},
+            "cheap-stub": {"input": 0.1, "output": 0.4},
+        },
+        **overrides,
+    )
+
+
+def test_the_cheap_tier_has_no_fallback() -> None:
+    """So that ``max_retries`` means retries, including when it means none.
+
+    The only call that could sit beneath the cheap tier is another call to the same model, so
+    a fallback there would make a cheap-routed request cost ``max_retries + 2`` provider calls
+    -- two at ``max_retries=0``, where the operator asked for one. That is a behaviour defect
+    rather than a naming one, and it is why ADR 0004 item 16 rejected cheap-to-cheap after
+    trying it.
+
+    Asserted on the shape rather than on a call count, which
+    ``tests/integration/test_routed_tier.py`` reads off an endpoint. The earlier version of
+    this test asserted that the two leaves shared an httpx connection pool -- true, and the
+    measurement that settled the decision, but it pinned a dependency's private attribute to
+    defend a fallback that no longer exists. The measurement is a dated fact in the row now.
+    """
+    chain = build_resilient_model(networked(), Tier.CHEAP, CallClass.SYNTHESIS)
+
+    assert chain.fallback is None, (
+        "the cheap tier has a fallback, so a cheap-routed request makes one more provider "
+        "call than max_retries allows for"
+    )
+    assert chain.primary.model_name == "cheap-stub", "precondition: the cheap tier was built"
+
+
+def test_the_capable_tier_falls_back_to_a_genuinely_cheaper_model() -> None:
+    """The control for the assertion above: on the capable tier the fallback is a real one."""
+    chain = build_resilient_model(networked(), Tier.CAPABLE, CallClass.SYNTHESIS)
+
+    assert chain.primary.model_name == "capable-stub"
+    assert chain.fallback is not None
+    assert chain.fallback.model_name == "cheap-stub", (
+        "the capable tier did not degrade to the cheap one, so this file would be asserting "
+        "the same thing twice"
+    )
+
+
+def sovereign_only(**overrides: object) -> Settings:
+    """An air-gapped deployment: the operator's own endpoint and nothing else."""
+    return build(
+        lane="sovereign",
+        sovereign_base_url="http://127.0.0.1:1/v1",
+        sovereign_model="sovereign-stub",
+        model_prices_usd_per_million={"sovereign-stub": {"input": 0.0, "output": 0.0}},
+        **overrides,
+    )
+
+
+def test_a_sovereign_deployment_has_no_working_fallback_on_either_tier() -> None:
+    """The composed consequence, pinned where the README claims it.
+
+    The README's limitations say an air-gapped deployment makes ``max_retries + 1`` attempts
+    and then fails. That claim is produced by three decisions meeting rather than by one, so
+    no single test of any of them holds it up:
+
+    - the sovereign lane binds the cheap tier, which has no fallback (ADR 0004 item 16);
+    - a public, involved request does reach the capable tier, via a ``cloud_capable`` route
+      that ``narrower_of`` pulls home -- so the capable tier is not unreachable here;
+    - but ``model_for`` resolves both tiers of the sovereign lane to one ``sovereign_model``,
+      so the capable tier's fallback degrades to the same model.
+
+    Asserted on the identifiers rather than on a call count because it is a statement about
+    every request on that deployment, not about one run. A README sentence with nothing
+    holding it is the thing this repository's inventory is a list of.
+    """
+    settings = sovereign_only()
+
+    cheap = build_resilient_model(settings, Tier.CHEAP, CallClass.SYNTHESIS)
+    assert cheap.fallback is None, "the cheap tier gained a fallback on the sovereign lane"
+
+    capable = build_resilient_model(settings, Tier.CAPABLE, CallClass.SYNTHESIS)
+    assert capable.fallback is not None, (
+        "the capable tier lost its fallback, so the claim below would hold for a different "
+        "reason than the one the README gives"
+    )
+    assert capable.primary.model_name == capable.fallback.model_name, (
+        "the sovereign lane now names two models, so its capable tier has a real degradation "
+        "step. The README's limitation and ADR 0004 item 16's undecided question both need "
+        f"revisiting: primary={capable.primary.model_name!r}, "
+        f"fallback={capable.fallback.model_name!r}"
+    )

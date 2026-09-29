@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The routed tier reaches model construction** (leak inventory item 16, closed). `bind_lane`
+  binds a tier as well as a lane; until now no channel carried it and the drafter asked for the
+  capable one regardless, so a public, simple request routed to `cloud_cheap` changed the audit
+  trail and nothing else. A `tier` state channel is written beside `lane` by the same node, and
+  the drafter reads it once for both its audit `model_id` and its factory call -- two reads is
+  how a trail comes to name a model the endpoint was never asked for.
+  `tests/integration/test_routed_tier.py` gives the two cloud tiers different identifiers, which
+  is what makes the difference visible at all: the reference configuration names one model for
+  both.
+- **An absent `tier` channel reads as the capable tier.** A checkpoint written before the channel
+  existed resumes exactly as it would have. This deliberately does not copy `lane_of`, which
+  fails closed to the most contained lane: containment has a safe direction and cost does not,
+  and resuming cheaper would answer a reviewer's rejection with a weaker draft than the one they
+  rejected. The cost is stated rather than hidden -- on such a checkpoint the lane event can say
+  `tier: cheap` while the resumed drafter asks for the capable model, bounded to runs started
+  before this change.
+
+### Changed
+
+- **A cheap-routed request makes exactly `max_retries + 1` provider calls.** The cheap tier has
+  no fallback, so the setting means what it says. The only model beneath it is itself, so a
+  fallback there would be one more billed call -- two at `max_retries = 0`, where the operator
+  asked for one. Cheap-to-cheap was built first and removed after measuring it:
+  `langchain-openai` caches its default httpx client on base URL, timeout and socket options, so
+  the two leaves shared one connection pool and the "fallback" was one more retry through the
+  same transport. The measurement is a dated fact in ADR 0004 item 16 rather than a test, since
+  pinning a dependency's private attribute would break on an upgrade for unrelated reasons. The
+  capable tier keeps its fallback, because the call beneath it is a different model.
+
 - **Retries and fallbacks, reaching an endpoint at last** (leak inventory item 15, closed).
   `build_resilient_model` is now the model factory every model-calling node is given, so a
   transient provider failure is retried on the tier that failed and a durable one falls back to

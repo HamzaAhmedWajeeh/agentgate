@@ -58,7 +58,7 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field, ValidationError
 
-from agentgate.config import Lane
+from agentgate.config import Lane, Tier
 
 
 class Sensitivity(StrEnum):
@@ -235,6 +235,16 @@ class AgentState(TypedDict, total=False):
     correct the whole time. Read with :func:`lane_of`; for where a call actually went, read the
     ``lane`` on that node's audit event."""
 
+    tier: str
+    """Resolved by the policy router alone, alongside ``lane``. A string, for the same reason
+    ``lane`` is one: it is serialised into a checkpoint and has to survive JSON.
+
+    **A cost decision, not a containment one.** Read with :func:`tier_of`, which defaults to
+    ``CAPABLE`` -- deliberately not the cheaper value, and deliberately not the way
+    :func:`lane_of` defaults. Containment has a safe direction and cost does not: an unreadable
+    lane resolving to ``SOVEREIGN`` cannot leak, whereas an unreadable tier resolving to
+    ``CHEAP`` would quietly answer worse. Leak inventory item 16."""
+
     sub_questions: list[str]
     """Written by the supervisor when it dispatches research."""
 
@@ -354,6 +364,28 @@ def outcomes_of(state: AgentState) -> list[ResearchOutcome]:
         for raw in state.get("research_outcomes", [])
         if (parsed := ResearchOutcome.parse(raw)) is not None
     ]
+
+
+def tier_of(state: AgentState) -> Tier:
+    """The tier the policy router chose, parsed.
+
+    Anything absent or unrecognised reads as ``CAPABLE``, which is what every drafted request
+    used before this channel existed. So a checkpoint written before it resumes exactly as it
+    would have, and the one direction this default can be wrong in is more expensive rather
+    than worse.
+
+    **Not the shape of :func:`lane_of`, on purpose.** That fails closed to the most contained
+    lane because containment has a safe direction. Cost does not: defaulting to the cheap tier
+    would make an old paused run come back with a weaker answer than the one it was paused on,
+    and a reviewer reading the revision has no way to see that happen. A second home for "which
+    lane is more contained" is the mistake ``narrower_of`` exists to prevent; re-deriving the
+    tier from ``classification`` here would be that mistake for the routing rule.
+    """
+    raw = str(state.get("tier", "") or "")
+    try:
+        return Tier(raw)
+    except ValueError:
+        return Tier.CAPABLE
 
 
 def lane_of(state: AgentState) -> Lane:
