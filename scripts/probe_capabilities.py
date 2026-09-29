@@ -26,8 +26,12 @@ from typing import Final
 
 from pydantic import BaseModel, Field
 
-from agentgate.config import CallClass, Lane, Settings, Tier, get_settings
+from agentgate.config import CallClass, DeciderBackend, Lane, Settings, Tier, get_settings
+from agentgate.decider.assessment import ROUTE
+from agentgate.decider.capabilities import DeciderCapability
+from agentgate.decider.jev import JevDecider
 from agentgate.errors import ConfigurationError
+from agentgate.guardrails.spend import Ceilings, MissingUsageError, SpendLedger, usage_of
 from agentgate.models.registry import Capability, build_model
 from agentgate.models.structured import invoke_with_repair
 
@@ -79,6 +83,125 @@ def probe_native_structured_output(settings: Settings) -> ProbeResult:
     )
 
 
+@dataclass(frozen=True)
+class DeciderProbeResult:
+    """What one call to a decider's endpoint showed about one capability."""
+
+    capability: DeciderCapability
+    supported: bool
+    detail: str
+
+
+# Invented and inert: the probe measures what a response carries, not how good the answer is.
+PROBE_STATE: Final = {
+    "routed_lane": "cloud",
+    "finding_count": 1,
+    "denied_tools": [],
+    "provenance_check_passed": True,
+    "proposed_actions": [],
+}
+
+
+def probe_jev(settings: Settings) -> list[DeciderProbeResult]:
+    """Make one real call and read the three capabilities off the raw response.
+
+    One call, not one per capability: every one of them is a property of the same response, and
+    each call is billed. The call is accounted in a ledger like any other.
+
+    Raises:
+        RuntimeError: if the endpoint did not answer 200.
+        TypeError: if it answered with something other than a JSON object. A failed probe is not
+            evidence that a capability is absent, so nothing is reported either way.
+    """
+    ledger = SpendLedger(settings, Ceilings.for_run(settings))
+    decider = JevDecider(settings, ledger)
+    response = decider.post(decider.request_body(PROBE_STATE))
+    if response.status_code != 200:  # noqa: PLR2004 - HTTP OK
+        msg = f"the endpoint answered HTTP {response.status_code}"
+        raise RuntimeError(msg)
+    payload = response.json()
+    if not isinstance(payload, dict):
+        msg = "the endpoint answered with something other than a JSON object"
+        raise TypeError(msg)
+
+    try:
+        usage = usage_of(payload.get("usage"))
+        usage_detail = f"usage block reported {usage.input_tokens} in, {usage.output_tokens} out"
+        reports_usage = True
+    except MissingUsageError as error:
+        usage_detail, reports_usage = str(error)[:160], False
+
+    route = (payload.get("answers") or {}).get(ROUTE) or {}
+    reports_confidence = "confidence" in route
+    answered_by = payload.get("model")
+
+    return [
+        DeciderProbeResult(DeciderCapability.REPORTS_USAGE, reports_usage, usage_detail),
+        DeciderProbeResult(
+            DeciderCapability.REPORTS_CONFIDENCE,
+            reports_confidence,
+            f"route Choice answer carried confidence={route.get('confidence')!r}",
+        ),
+        DeciderProbeResult(
+            DeciderCapability.ECHOES_VERSIONED_MODEL,
+            answered_by == settings.jev_model,
+            f"asked for {settings.jev_model!r}, response named {answered_by!r}",
+        ),
+    ]
+
+
+def render_decider_entry(result: DeciderProbeResult, model_id: str) -> str:
+    """A paste-ready ``DECIDER_CAPABILITY_MATRIX`` entry, for a person to review and paste."""
+    today = datetime.now(UTC).date().isoformat()
+    return "\n".join(
+        [
+            f"    (DeciderBackend.JEV, DeciderCapability.{result.capability.name}): Observation(",
+            f"        supported={result.supported},",
+            "        provenance=Provenance.LIVE_PROBE,",
+            f"        recorded_on=date({today[:4]}, {int(today[5:7])}, {int(today[8:10])}),",
+            (
+                f'        note="Probed against {model_id} on {today} via '
+                'scripts/probe_capabilities.py jev. "'
+            ),
+            f'        "{result.detail}",',
+            "    ),",
+        ]
+    )
+
+
+def main_jev(settings: Settings) -> int:
+    """Probe the configured Jev endpoint and print decider matrix entries for what it showed."""
+    official = Settings.model_fields["jev_base_url"].default
+    if settings.decider_backend is not DeciderBackend.JEV:
+        print("AGENTGATE_DECIDER_BACKEND is not 'jev'; nothing to probe.", file=sys.stderr)
+        return EXIT_BAD_CONFIG
+    if settings.jev_base_url != official:
+        print(
+            f"AGENTGATE_JEV_BASE_URL is {settings.jev_base_url!r}, not the official API "
+            f"({official}). A probe records LIVE_PROBE rows, which mean TypeSafe itself was "
+            "observed; recording a stub or a proxy under that name is the thing this refuses.",
+            file=sys.stderr,
+        )
+        return EXIT_BAD_CONFIG
+
+    print(f"\n  Probing {settings.jev_base_url}/systemone as {settings.jev_model}.")
+    print("  This makes one small billed call.\n")
+    try:
+        results = probe_jev(settings)
+    except Exception as error:  # a failed probe is a result to report, not a crash
+        print(f"  Probe failed outright: {type(error).__name__}: {error}", file=sys.stderr)
+        print("  Nothing recorded. A failed probe is not evidence of absence.", file=sys.stderr)
+        return EXIT_PROBE_FAILED
+
+    for result in results:
+        print(f"  OBSERVED  {result.capability.value} = {result.supported}")
+        print(f"            {result.detail}")
+    print("\n  Paste into DECIDER_CAPABILITY_MATRIX in src/agentgate/decider/capabilities.py:\n")
+    for result in results:
+        print(render_decider_entry(result, settings.jev_model))
+    return EXIT_OK
+
+
 def render_entry(result: ProbeResult, model_id: str) -> str:
     """A paste-ready ``CAPABILITY_MATRIX`` entry.
 
@@ -105,9 +228,9 @@ def render_entry(result: ProbeResult, model_id: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Probe the configured lane and print a matrix entry for what it found."""
-    if argv:
-        print(f"usage: python scripts/probe_capabilities.py  (got {argv})", file=sys.stderr)
+    """Probe the configured lane -- or, with ``jev``, the decider -- and print matrix entries."""
+    if argv and argv != ["jev"]:
+        print(f"usage: python scripts/probe_capabilities.py [jev]  (got {argv})", file=sys.stderr)
         return EXIT_BAD_CONFIG
 
     try:
@@ -115,6 +238,9 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigurationError as error:
         print(str(error), file=sys.stderr)
         return EXIT_BAD_CONFIG
+
+    if argv == ["jev"]:
+        return main_jev(settings)
 
     if not settings.requires_network:
         print(

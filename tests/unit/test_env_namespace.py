@@ -41,6 +41,10 @@ PERMITTED_UNPREFIXED_READS: dict[str, set[str]] = {
     "openai_api_key": {"OPENAI_API_KEY"},
     "langsmith_api_key": {"LANGSMITH_API_KEY"},
     "langsmith_project": {"LANGSMITH_PROJECT"},
+    # TypeSafe's own tooling reads this name. Accepted so an operator with a key already set
+    # need not set it twice -- and declared here, because it is a credential arriving from the
+    # shared namespace. B3 strips it from the offline suite's environment.
+    "jev_api_key": {"TYPESAFE_API_KEY"},
 }
 
 
@@ -143,13 +147,75 @@ def test_every_permitted_read_is_a_conventional_third_party_name() -> None:
 
     A name invented here has no such excuse and belongs under the prefix.
     """
-    conventional_prefixes = ("OPENAI_", "LANGSMITH_")
+    # TYPESAFE_: the TypeSafe SDK reads TYPESAFE_API_KEY by default (docs.typesafe.ai
+    # quick start, read 2026-09-28), which is what makes it the ecosystem's name and not ours.
+    conventional_prefixes = ("OPENAI_", "LANGSMITH_", "TYPESAFE_")
 
     for names in PERMITTED_UNPREFIXED_READS.values():
         for name in names:
             assert name.startswith(conventional_prefixes), (
                 f"{name} is not an established third-party variable; prefix it instead"
             )
+
+
+# --------------------------------------------------- in-process construction, leak item 21
+
+
+def aliased_fields() -> dict[str, set[str]]:
+    """Every field with a validation alias, and its aliases upper-cased."""
+    return {
+        name: {str(choice).upper() for choice in field.validation_alias.choices}
+        for name, field in Settings.model_fields.items()
+        if isinstance(field.validation_alias, AliasChoices)
+    }
+
+
+def test_there_are_aliased_fields_to_check() -> None:
+    """The two tests below iterate over aliased fields; this is what stops them iterating over
+    nothing if the aliases were ever restructured."""
+    fields = aliased_fields()
+
+    assert "jev_api_key" in fields
+    assert "openai_api_key" in fields
+
+
+@pytest.mark.parametrize(
+    "name",
+    sorted(name for name, aliases in aliased_fields().items() if name.upper() not in aliases),
+)
+def test_an_aliased_field_cannot_be_set_by_its_own_name(name: str) -> None:
+    """Leak inventory item 21, asserted as the current truth.
+
+    With a validation alias and ``case_sensitive=False``, a constructor keyword is matched against
+    the aliases and never the field name, and ``extra="ignore"`` discards one that matches
+    nothing. So ``Settings(jev_api_key="x")`` constructs without complaint and the key is
+    ``None``. Every aliased field whose aliases do not happen to spell its own name is affected,
+    and this parametrises over all of them -- so a field added later is covered without anyone
+    remembering to add it.
+
+    If this starts failing, keywords now arrive by field name (``populate_by_name``, or a change
+    in pydantic-settings), and item 21 is what to rewrite.
+    """
+    settings = Settings(_env_file=None, **{name: "arrived-by-field-name"})  # type: ignore[call-arg]
+
+    value = getattr(settings, name)
+    shown = value.get_secret_value() if hasattr(value, "get_secret_value") else value
+    assert shown != "arrived-by-field-name", f"{name}= now reaches the field"
+
+
+@pytest.mark.parametrize(
+    "name",
+    sorted(name for name, aliases in aliased_fields().items() if name.upper() in aliases),
+)
+def test_a_field_whose_alias_spells_its_name_works_only_by_coincidence(name: str) -> None:
+    """The control for the test above, and why the trap stayed hidden: ``openai_api_key=`` works,
+    because ``OPENAI_API_KEY`` is both its unprefixed alias and its name, case-insensitively.
+    Every test that constructs a cloud deployment relies on that coincidence."""
+    settings = Settings(_env_file=None, **{name: "arrived-by-alias"})  # type: ignore[call-arg]
+
+    value = getattr(settings, name)
+    shown = value.get_secret_value() if hasattr(value, "get_secret_value") else value
+    assert shown == "arrived-by-alias"
 
 
 # --------------------------------------------------------------- foreign keys are tolerated

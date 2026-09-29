@@ -294,6 +294,13 @@ class AgentState(TypedDict, total=False):
     Written by the gate on an approval and checked again by ``execute`` before any effect, so a
     proposal that changed after the approval is refused rather than performed."""
 
+    assessment: dict[str, Any]
+    """The decider's verdict on the current draft, as the assess node stored it -- or the reason it
+    was not asked. Plain JSON (ADR 0011), overwritten on every assessment so a verdict about an
+    earlier draft cannot be read as one about this. Read with :func:`assessment_of`, which fails
+    closed: anything it cannot make sense of reads as no assessment, and no assessment means a
+    human decides."""
+
     spend: dict[str, dict[str, int]]
     """What the run has spent so far, per model: ``{model: {"input_tokens", "output_tokens"}}``.
 
@@ -319,6 +326,16 @@ def proposals_of(state: AgentState) -> list[Proposal]:
         for raw in state.get("proposed_actions", []) or []
         if (parsed := Proposal.parse(raw)) is not None
     ]
+
+
+def assessment_of(state: AgentState) -> dict[str, Any] | None:
+    """The stored assessment, or ``None`` if there is none that can be read. Tolerant and fail
+    closed: a checkpoint from before the channel, or a record without the fields the gate needs,
+    reads as absent -- and an absent assessment never auto-approves anything."""
+    record = state.get("assessment")
+    if not isinstance(record, dict) or not isinstance(record.get("called"), bool):
+        return None
+    return dict(record)
 
 
 def findings_of(state: AgentState) -> list[Finding]:

@@ -28,7 +28,7 @@ from agentgate.guardrails.run_ledger import ledger_of
 
 NODE = "supervisor"
 
-Destination = Literal["researcher", "drafter", "approval_gate", "budget_guard"]
+Destination = Literal["researcher", "drafter", "assess", "budget_guard"]
 
 
 def supervise(
@@ -74,7 +74,9 @@ def supervise(
         # A draft exists and no human has approved it. Rejection clears the draft, so a
         # rejected run falls through to the drafter above on its next turn -- that fall-through
         # is the revision loop, and it is a loop precisely because neither branch is terminal.
-        goto = "approval_gate"
+        # Via the decider's assessment, which the gate reads. The assess node always runs, so a
+        # stale verdict from an earlier draft is overwritten even when no decider is asked.
+        goto = "assess"
     else:
         goto = "budget_guard"
 

@@ -72,6 +72,11 @@ Nothing here is aspirational, and nothing below is a promise about what will exi
   the build.
 - An output check on citation provenance — every source the draft cites must be one research
   actually returned. Exact rather than heuristic, and it cannot see an uncited fabrication.
+- A decider in front of the approval gate: TypeSafe's Jev, asked once per draft on a cloud-routed
+  request, shown structured facts and never the draft. It can approve in a human's place or ask a
+  human -- never reject -- and it runs in **shadow mode by default**, recording its verdict beside
+  the human's decision. Offline-tested against a stub shaped from TypeSafe's published API; see the
+  limitation below. docs/adr/0012.
 
 **Not built.** Long-term memory and time travel, the FastAPI and CLI surfaces, streaming,
 structlog/OpenTelemetry/Prometheus instrumentation, and the eval suite. `docs/concept-map.md`
@@ -97,6 +102,14 @@ What the ceilings do **not** bound:
   account into ledgers of their own, and no ceiling spans them and a run.
 - **A crash after a model call and before the next supervisor turn** loses that call's spend from
   the persisted total, so a run resumed from such a checkpoint starts slightly low.
+
+**The decider has never been run against TypeSafe, and no enforce-mode threshold exists.** Every
+test uses a stub shaped from the published API; its capability rows are marked `STUB` until a live
+probe runs. Enforce mode needs thresholds measured from shadow-mode agreement, none have been
+measured, and configuration refuses enforce mode without them. Calibration is not claimed. And the
+decider is not injection-proof: it is shown the proposed actions, whose arguments the drafter wrote,
+so a drafter talked into a proposal can still argue for it there. What bounds that is that it can
+never reject, shadow is the default, and the deterministic preconditions are checked in code first.
 
 **There are no retries and no fallbacks on any lane.** `build_resilient_model` composes both and
 is tested against a server returning real HTTP errors, and nothing in `src/` calls it. That is
@@ -138,7 +151,7 @@ lane is not claimed: a classifier that cannot produce a verdict fails closed to 
 the cost of a weak one is the cloud lane going unused, and nobody has measured how often.
 
 **Written down, not solved.** [ADR 0004](docs/adr/0004-provider-abstraction-and-lanes.md) keeps
-an inventory of every place something claimed one thing and did another — twenty-five entries,
+an inventory of every place something claimed one thing and did another — twenty-six entries,
 each established by running something or by checking a claim against what calls it. Two of them
 are corrections to earlier claims in this repository: item 19 reopens item 9, which said *closed*
 and was not, and item 20 corrects this README, which said embedding spend was accounted. Items 22

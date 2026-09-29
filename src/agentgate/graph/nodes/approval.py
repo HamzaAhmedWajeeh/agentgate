@@ -25,15 +25,19 @@ what makes the rule real rather than folklore.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import operator
+from collections.abc import Callable, Iterator
+from typing import Any, Final, Literal
 
 from langgraph.types import Command, interrupt
 
 from agentgate.audit.events import Decided, audit_event, digest
-from agentgate.config import Settings
+from agentgate.config import DeciderMode, Lane, Settings
+from agentgate.decider.assessment import AUTO_APPROVE, DETERMINISTIC_PRECONDITIONS
 from agentgate.effects.proposals import digest_of
 from agentgate.graph.completeness import research_gaps
-from agentgate.graph.state import AgentState, Decision, proposals_of
+from agentgate.graph.nodes.assess import decision_facts
+from agentgate.graph.state import AgentState, Decision, assessment_of, proposals_of
 
 NODE = "approval_gate"
 
@@ -87,6 +91,14 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
     packet = review_packet(state)
     correlation_id = state.get("correlation_id", "")
     revisions = state.get("revisions", 0)
+    assessment = assessment_of(state)
+
+    # The decider may approve in a human's place only when every condition holds, and it is
+    # asked nothing here: it assessed once, before this node, and this reads what it stored.
+    # Pure, so it is safe above the pause. A "no" is not a rejection -- it is a human.
+    decider_may_approve, why = auto_approval(state, settings)
+    if decider_may_approve:
+        return _approved(state, packet, revisions, approved_by="decider", assessment=assessment)
 
     verdict = interrupt(packet)
 
@@ -106,27 +118,8 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
         return _refused(state, settings, packet, revisions, approved_digest)
 
     if decision is Decision.APPROVED:
-        return Command(
-            update={
-                "decision": Decision.APPROVED.value,
-                "approved_digest": shown,
-                "audit_trail": [
-                    audit_event(
-                        node=NODE,
-                        decided=Decided.APPROVED,
-                        correlation_id=correlation_id,
-                        input_digest=digest(state.get("draft", "")),
-                        lane=state.get("lane"),
-                        detail={
-                            "revision": revisions,
-                            "approved_partial": not packet["answer_complete"],
-                            "proposals_digest": shown,
-                            "actions_approved": len(packet["proposed_actions"]),
-                        },
-                    )
-                ],
-            },
-            goto="execute",
+        return _approved(
+            state, packet, revisions, approved_by="human", assessment=assessment, declined=why
         )
 
     return Command(
@@ -150,11 +143,128 @@ def approval_gate(state: AgentState, settings: Settings) -> Command[Destination]
                         "revision": revisions,
                         "revision_budget": settings.max_iterations,
                         "feedback_given": bool(feedback),
+                        "decided_by": "human",
+                        "decider_declined_because": why,
+                        "assessment": assessment,
                     },
                 )
             ],
         },
         goto="drafter",
+    )
+
+
+PRECONDITION_HOLDS: Final[dict[str, Callable[[Any], bool]]] = {
+    "provenance_check_passed": lambda passed: passed is True,
+    "denied_tools": lambda denied: not denied,
+}
+"""What each deterministic precondition requires. Checked in code, before any verdict is read."""
+
+
+def auto_approval(state: AgentState, settings: Settings) -> tuple[bool, str]:
+    """Whether the decider's stored verdict approves in a human's place, and if not, why.
+
+    Every condition must hold, and the **deterministic preconditions are checked first, in code,
+    before the verdict is read at all**: provenance must have passed and no tool may have been
+    denied. Those are facts, not judgements; a model is never asked to re-derive them, and a
+    verdict cannot outvote them. Then the verdict: enforce mode, a cloud-routed assessment that
+    was made and did not fail, of exactly the proposals now in state, with the route at or above
+    its probability, its reported confidence at or above its floor, and the irreversibility Noul
+    at or below its ceiling. The first condition that fails is the reason -- recorded, so shadow
+    mode shows what enforcement would have done.
+    """
+    reason = next(_unmet(state, settings), None)
+    return reason is None, reason or "every condition held"
+
+
+def _unmet(state: AgentState, settings: Settings) -> Iterator[str]:
+    """Each condition that does not hold, in the order they are checked. Only the first is
+    ever taken, so nothing after a failed condition is evaluated."""
+    facts = decision_facts(state, settings)
+    # Driven by the constant the questions are kept clear of, so a precondition added there
+    # without a check here fails loudly (KeyError) rather than being quietly skipped.
+    for field in DETERMINISTIC_PRECONDITIONS:
+        if not PRECONDITION_HOLDS[field](facts[field]):
+            yield f"deterministic precondition failed: {field}={facts[field]!r}"
+
+    if settings.decider_mode is not DeciderMode.ENFORCE:
+        yield "shadow mode: the verdict is recorded, never acted on"
+    record = assessment_of(state)
+    if record is None or not record["called"]:
+        yield f"no verdict: {(record or {}).get('reason', 'no assessment')}"
+        return
+    if record.get("lane") != Lane.CLOUD.value:
+        yield "the assessment was not made on a cloud-routed request"
+    if record.get("failure"):
+        yield f"the decider failed: {record['failure']}"
+    if record.get("proposals_digest") != digest_of(proposals_of(state)):
+        yield "the proposals changed after they were assessed"
+    if record.get("route") != AUTO_APPROVE:
+        yield f"route is {record.get('route')!r}"
+
+    measured = (
+        (
+            "route probability",
+            (record.get("route_probabilities") or {}).get(AUTO_APPROVE),
+            settings.auto_approve_min_probability,
+            operator.ge,
+        ),
+        (
+            "route confidence",
+            record.get("route_confidence"),
+            settings.auto_approve_min_confidence,
+            operator.ge,
+        ),
+        (
+            "irreversibility",
+            record.get("irreversibility"),
+            settings.auto_approve_max_irreversibility,
+            operator.le,
+        ),
+    )
+    for label, value, bound, holds in measured:
+        if not isinstance(value, int | float) or bound is None or not holds(value, bound):
+            yield f"{label} {value!r} does not meet {bound!r}"
+
+
+def _approved(  # noqa: PLR0913 - the approval and everything it records
+    state: AgentState,
+    packet: dict[str, Any],
+    revisions: int,
+    *,
+    approved_by: str,
+    assessment: dict[str, Any] | None,
+    declined: str | None = None,
+) -> Command[Destination]:
+    """An approval, by a human or by the decider, of exactly the proposals on the packet."""
+    shown = packet["proposals_digest"]
+    return Command(
+        update={
+            "decision": Decision.APPROVED.value,
+            "approved_digest": shown,
+            "audit_trail": [
+                audit_event(
+                    node=NODE,
+                    decided=Decided.APPROVED,
+                    correlation_id=state.get("correlation_id", ""),
+                    input_digest=digest(state.get("draft", "")),
+                    lane=state.get("lane"),
+                    detail={
+                        "revision": revisions,
+                        "approved_partial": not packet["answer_complete"],
+                        "proposals_digest": shown,
+                        "actions_approved": len(packet["proposed_actions"]),
+                        # Who approved, and the whole stored verdict either way. In shadow mode
+                        # this is where the decider's view sits beside the human's decision, so
+                        # agreement can be measured from the trail alone.
+                        "approved_by": approved_by,
+                        "decider_declined_because": declined,
+                        "assessment": assessment,
+                    },
+                )
+            ],
+        },
+        goto="execute",
     )
 
 
@@ -188,6 +298,7 @@ def _refused(
                         "proposals_digest": packet["proposals_digest"],
                         "approval_carried": approved_digest,
                         "actions_proposed": len(packet["proposed_actions"]),
+                        "assessment": assessment_of(state),
                     },
                 )
             ],

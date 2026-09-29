@@ -25,9 +25,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agentgate.config import CheckpointerBackend, Settings
+from agentgate.decider.build import build_decider
 from agentgate.effects.sink import EffectSink, build_effect_sink
 from agentgate.errors import AgentgateError
 from agentgate.graph.nodes.approval import approval_gate
+from agentgate.graph.nodes.assess import DeciderFactory, assess
 from agentgate.graph.nodes.classify import classify
 from agentgate.graph.nodes.drafter import draft
 from agentgate.graph.nodes.execute import execute
@@ -75,6 +77,7 @@ def build_graph(  # noqa: PLR0913 - each factory is an injection point a test ne
     interrupt_before: Sequence[str] | None = None,
     retriever_factory: RetrieverFactory = build_retriever,
     effect_sink_factory: Callable[[Settings], EffectSink] = build_effect_sink,
+    decider_factory: DeciderFactory = build_decider,
 ) -> Any:
     """Assemble and compile the graph.
 
@@ -87,6 +90,8 @@ def build_graph(  # noqa: PLR0913 - each factory is an injection point a test ne
             script replies without patching a global.
         retriever_factory: How a research branch obtains a retriever. Injected for the same
             reason, and called lazily -- compiling a graph does not read the corpus.
+        decider_factory: How the assess node obtains the decider. Injected so a test can
+            script a verdict; in the running system it is ``build_decider``.
         effect_sink_factory: Where ``execute`` records approved effects. Injected so a test can
             crash a sink after it writes; in the running system it is the outbox, the only sink.
         interrupt_before: Nodes to pause before. A compile-time option in LangGraph 1.x --
@@ -116,6 +121,7 @@ def build_graph(  # noqa: PLR0913 - each factory is an injection point a test ne
     graph.add_node("supervisor", partial(supervise, settings=settings))
     graph.add_node("researcher", partial(research, settings=settings))
     graph.add_node("drafter", partial(draft, settings=settings, model_factory=model_factory))
+    graph.add_node("assess", partial(assess, settings=settings, decider_factory=decider_factory))
     graph.add_node("approval_gate", partial(approval_gate, settings=settings))
     graph.add_node(
         "execute",
@@ -157,6 +163,11 @@ def build_graph(  # noqa: PLR0913 - each factory is an injection point a test ne
     # edge as well would describe a second path that never runs.
 
     graph.add_edge("drafter", "supervisor")
+
+    # The decider assesses once, then the gate reads the stored verdict. A static edge is right
+    # here and would be wrong out of the gate: assess does not pause, and nothing it leads to
+    # acts -- the gate still stands between it and `execute` (leak inventory item 26).
+    graph.add_edge("assess", "approval_gate")
 
     # The approval gate leaves by Command(goto=...) -- "execute" on approval, "drafter" on
     # rejection. The rejection edge is the revision loop, and it is the only loop in the graph

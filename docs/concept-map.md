@@ -109,6 +109,11 @@ Things this build surfaced that were not on the original list, kept because each
 | Unmeasured usage is an error, never a free call | **done** | `guardrails/spend.py:usage_of` |
 | Embedding spend accounted in the same ledger | **done** | `retrieval/embeddings.py:build_embeddings` constructs `retrieval/accounting.py:AccountedEmbeddings`, billed via `guardrails/run_ledger.py:charging`. Leak inventory items 9 and 19, closed |
 | ↳ why that row changed twice | **done** (pinned) | `tests/integration/test_routed_lane_enforcement.py::test_every_embedding_call_is_accounted_in_the_run_ledger`; it said *done* while nothing constructed the class (item 19), then *built, not wired*, and is now wired |
+| Decider in front of the approval gate (Jev, LLM, fake), fail-closed to a human | **done** | `graph/nodes/assess.py:assess` calls `decider/build.py:build_decider` once per draft, before the gate, on cloud-routed requests only; `tests/integration/test_decider_gate.py` |
+| Decider sent structured facts, never the draft | **done** | `graph/nodes/assess.py:decision_facts`; `tests/integration/test_decider_gate.py::test_the_decider_is_sent_structured_facts_and_never_the_draft` |
+| Gate checks deterministic preconditions in code before reading a verdict | **done** | `graph/nodes/approval.py:auto_approval`; `decider/assessment.py:DETERMINISTIC_PRECONDITIONS` |
+| Shadow mode: verdict recorded beside the human's decision, never acted on | **done** | `graph/nodes/approval.py`, the `approved_by` and `assessment` fields of the approval event |
+| Decider capability rows with provenance, STUB until a live probe | **built, not wired** | `decider/capabilities.py:DECIDER_CAPABILITY_MATRIX`. A record the probe replaces; no code consults it |
 | Output check: citation provenance | **done** | `guardrails/output.py:check_provenance`; `tests/unit/test_output_guardrail.py` |
 | Durable append-only audit trail | **done** | `audit/writer.py:write_events`; `graph/nodes/finalise.py` |
 | Trail readable with no imports from agentgate | **done** | `tests/integration/test_audit_trail.py::test_the_trail_reads_with_the_standard_library_alone` |
@@ -144,6 +149,9 @@ Things this build surfaced that were not on the original list, kept because each
 | [0007](adr/0007-configuration-validated-at-startup.md) | Validation at startup, not at import |
 | [0008](adr/0008-tracing-backend-is-a-deployment-decision.md) | OpenTelemetry as instrumentation; backend as deployment choice |
 | [0009](adr/0009-env-is-a-shared-namespace.md) | `.env` is read, not owned |
+| [0010](adr/0010-dense-in-process-retrieval-by-default.md) | Dense in-process retrieval by default |
+| [0011](adr/0011-checkpoints-are-a-durable-format.md) | A checkpoint is a durable format, so state channels hold data |
+| [0012](adr/0012-the-decider-is-a-declared-egress.md) | The decider is a declared egress that can only ask for a human |
 
 Pending: 0001 (LangGraph over a custom loop), 0002 (supervisor over swarm),
 0003 (checkpointer selection), 0005 (interrupt placement and idempotency).

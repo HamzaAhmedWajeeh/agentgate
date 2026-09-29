@@ -436,21 +436,8 @@ def test_without_the_update_the_same_resume_delivers_the_decision() -> None:
     assert ran == ["act"]
 
 
-@pytest.mark.parametrize(
-    ("values", "as_node"),
-    [
-        ({"proposed_actions": []}, None),
-        ({"decision": "approved"}, "approval_gate"),
-    ],
-)
-def test_in_agentgate_an_update_at_the_gate_ends_the_run_and_can_reach_nothing(
-    tmp_path: Path, values: dict[str, Any], as_node: str | None
-) -> None:
-    """Why the project graph survives item 26: the approval gate leaves only by ``Command``, with
-    no static edge to ``execute``. So the same update -- including one that writes an approval *as
-    the gate* -- leaves no next node at all. The run ends, and the resume after it is silently a
-    no-op: nothing executes, nothing is refused, nothing errors. Adding a static edge out of the
-    gate would turn this red, which is the point of pinning it."""
+def _paused_agentgate_run(tmp_path: Path) -> tuple[Any, dict[str, Any], str]:
+    """The project graph, paused at the approval gate. Returns the graph, config and shown hash."""
     settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
         outbox_path=tmp_path / "outbox.jsonl",
@@ -462,12 +449,50 @@ def test_in_agentgate_an_update_at_the_gate_ends_the_run_and_can_reach_nothing(
     state["sub_questions"] = ["refund escalation"]
     graph.invoke(state, config)
     assert graph.get_state(config).next == ("approval_gate",), "precondition: paused at the gate"
+    shown = dict(graph.get_state(config).interrupts[0].value)["proposals_digest"]
+    return graph, config, shown
 
-    graph.update_state(config, values, as_node=as_node)
+
+def test_in_agentgate_an_approval_written_as_the_gate_ends_the_run_and_reaches_nothing(
+    tmp_path: Path,
+) -> None:
+    """Why the project graph survives item 26: the approval gate leaves only by ``Command``, with
+    no static edge to ``execute``. An approval written *as the gate* therefore leaves no next node:
+    the run ends, and the resume after it is silently a no-op -- nothing executes, nothing errors.
+    Adding a static edge out of the gate turns this red, which is the point of pinning it."""
+    graph, config, _ = _paused_agentgate_run(tmp_path)
+
+    graph.update_state(config, {"decision": "approved"}, as_node="approval_gate")
     after = graph.get_state(config)
     result = graph.invoke(Command(resume={"decision": "approved"}), config)
 
     assert after.next == (), "the update ended the run"
     assert not after.interrupts, "and dropped the pause with it"
+    assert not [e for e in result["audit_trail"] if e["decided"] == "executed"]
+    assert not (tmp_path / "outbox.jsonl").exists()
+
+
+def test_in_agentgate_an_unnamed_update_re_enters_the_gate_and_a_stale_approval_is_refused(
+    tmp_path: Path,
+) -> None:
+    """With no node named, the write is credited to the last writer before the pause. Since the
+    assess node (B5) that is ``assess``, whose static edge leads *into* the gate -- so the run does
+    not end: the gate runs again over the changed state, and the pending resume is applied to that
+    fresh pass. What keeps that safe is the approval hash: an approval carrying the hash of what was
+    shown -- as the CLI's always does -- no longer matches, and is refused rather than run.
+
+    Before the assess node, the same update ended the run (the last writer was the supervisor,
+    which routes by ``Command``). The behaviour moved with the topology; the guarantee did not."""
+    graph, config, shown = _paused_agentgate_run(tmp_path)
+    refund = {"tool": "issue_refund", "arguments": {"account": "4929", "amount_units": 240.0}}
+
+    graph.update_state(config, {"proposed_actions": [refund]})
+    after = graph.get_state(config)
+    result = graph.invoke(
+        Command(resume={"decision": "approved", "approved_digest": shown}), config
+    )
+
+    assert after.next == ("approval_gate",), "the update routes back into the gate"
+    assert [e for e in result["audit_trail"] if e["decided"] == "approval_refused"]
     assert not [e for e in result["audit_trail"] if e["decided"] == "executed"]
     assert not (tmp_path / "outbox.jsonl").exists()

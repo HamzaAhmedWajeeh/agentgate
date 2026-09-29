@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `env/sovereign.env` and `env/hybrid.env`: deployment examples with every setting stated -- no profile
+  variable -- including the effect sink and outbox path. Secrets are left blank and model identifiers
+  are placeholders; a test holds each file to the settings model and loads it once its secrets are
+  supplied. The hybrid example runs Jev in shadow mode with no threshold set.
+- ADR 0012, the decider: a declared egress on the cloud lane only, that can approve or ask a human but
+  never reject, shadow by default with thresholds that must come from measured agreement (none
+  exists), preconditions checked in code before any verdict, the assess node separate from the gate,
+  no SDK, and the injection limitation stated plainly -- structured facts narrow the surface and do
+  not close it, because a proposal's arguments are model-authored.
+- **The decider in front of the approval gate** (Part B, B5). An `assess` node, between the
+  supervisor and the gate, asks the decider once per draft -- only on a cloud-routed request, and
+  charged to the run ledger -- and stores its verdict as JSON. It is sent structured facts: the
+  routed lane, the finding count, the denied tools, the provenance result and the proposed actions;
+  never the draft. The gate checks the deterministic preconditions (provenance passed, no denied
+  tool) in code before it reads the verdict at all, and approves in a human's place only in enforce
+  mode, when the assessed proposals still hash to what is in state and every threshold holds.
+  Everything else -- shadow mode, a restricted route, any decider failure, any unmet condition -- is
+  a human, and the approval event records who approved alongside the whole stored verdict, so shadow
+  agreement can be measured from the trail. A skipped assessment overwrites any earlier verdict.
 - ADR 0004 item 26: `update_state` on a paused interrupt drops the pause silently. Written as the
   paused node, the resume value is discarded and a static successor runs without the human's
   decision; with no node named, this graph's run ends and the next resume is a no-op. This graph
@@ -43,6 +62,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recommending that spelling; pinned in `test_toolchain_blind_spots.py`. 23: native structured
   output let the client parse inside the call, so a billed reply that failed to validate reported no
   usage -- five requests at the stub, four in the book.
+- The decider, `decider/`, with three backends behind `build_decider`: `jev` (TypeSafe's
+  `POST /v1/systemone` over plain `httpx`, no SDK), `llm` (the cloud chat lane asked the route
+  question) and `fake` (deterministic, and unscripted it asks a human). Every outcome is an
+  `Assessment`, and every failure -- a timeout, 401, 422, a second 429 or 5xx, a non-JSON body, a
+  missing field, a missing usage block, or a response from a model other than the pinned one --
+  is an assessment with no route, which asks a human. At most one retry, on 429 or 5xx, honouring
+  `retry-after` up to five seconds. Usage is recorded against the pinned model before the answer
+  is judged, and a crossed spend ceiling aborts rather than becoming a human review. Confidence is
+  the reported field, never recomputed. The `llm` backend reports a route and nothing numeric, so
+  it can never meet the enforce-mode thresholds. **Built, not wired:** nothing calls
+  `build_decider` until the assess node exists, so no request is assessed today.
+- `usage_of` reads a raw usage block as well as a chat reply, and refuses a partial one: on an API
+  that charges for input only, a block without `input_tokens` is an unmeasured call, not a free one.
+- A TypeSafe stub in `tests/doubles/`, shaped from the published API reference, with a request log
+  of path, headers and body, and every documented failure status: 422, 429 and 529, plus 500.
+- `DECIDER_CAPABILITY_MATRIX`, every Jev row `STUB` until a live probe runs, and
+  `scripts/probe_capabilities.py jev`, which makes one call and emits `LIVE_PROBE` rows -- and
+  refuses to run against anything but the official endpoint, so a stub cannot be recorded as the
+  real thing.
+- The offline suite strips every `TYPESAFE_*` variable, which covers the four TypeSafe's SDKs
+  read on their own -- key, base URL, default model, log level -- and any a later release adds.
+  `TYPESAFE_API_KEY` is also a declared alias of the decider key, so a developer with TypeSafe
+  configured would otherwise have handed every test a live decider key. Named case in
+  `test_offline_isolation.py`: the variables are exported before isolation runs, and none
+  survives.
+- ADR 0004 item 21: a settings field with a validation alias cannot be set by its own name. The
+  keyword is matched against the aliases and silently dropped, so `Settings(jev_api_key="x")`
+  gives `None`; `openai_api_key=` works only because its alias spells the field name. Pinned as
+  the current truth over every aliased field, so fields added later are covered automatically.
+- `.env.example` records the Jev price beside its pinned version as a dated comment: $0.042 per
+  million input tokens, output free, read 2026-09-28.
+- Decider configuration, validated at startup: `AGENTGATE_DECIDER_BACKEND` (`none` | `jev` | `llm`,
+  default `none`), `AGENTGATE_DECIDER_MODE` (`shadow` | `enforce`, default `shadow`), the Jev base
+  URL, key and model, and three auto-approve thresholds -- route probability, route confidence and
+  irreversibility -- each reading a field the TypeSafe API returns. **Configuration only: nothing
+  reads these settings yet**, so no decider runs and nothing here is a claim about behaviour.
+  Refused at startup, each with a message naming the variable: a Jev backend with no key; any
+  decider on a deployment with no routable cloud lane; a Jev model that is not an exact version;
+  an unpriced Jev model; enforce mode with no backend, a missing threshold, or a threshold no
+  answer can fail. `TYPESAFE_API_KEY` is a declared alias, added to the permitted unprefixed reads.
 - `src/` layout, packaged with hatchling, exposing a typed `agentgate` distribution.
 - Pinned dependency set: LangGraph 1.2.10 and LangChain 1.3.14 for orchestration, both SQLite
   and Postgres checkpointers, FastAPI and Typer surfaces, and the structlog / OpenTelemetry /
