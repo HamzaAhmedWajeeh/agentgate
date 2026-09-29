@@ -5,7 +5,7 @@ written down somewhere better:
 
 | Looking for | Read |
 | --- | --- |
-| Where something claimed one thing and did another | `docs/adr/0004-provider-abstraction-and-lanes.md` — the leak inventory; rows 1–20 and 22–26 on `main`, row 21 arrives with PR #18 |
+| Where something claimed one thing and did another | `docs/adr/0004-provider-abstraction-and-lanes.md` — the leak inventory, 26 rows |
 | Whether a concept is built | `docs/concept-map.md` — three statuses, all enforced by `tests/unit/test_concept_map.py` |
 | What changed and why | `CHANGELOG.md` |
 | Why a design is the way it is | `docs/adr/` |
@@ -85,12 +85,11 @@ run's spend ledger. Model-calling nodes refuse to run without it, and any new mo
 decider's included -- is charged to it. A node reading its config takes a required
 `config: RunnableConfig`: the optional-union spelling is silently not injected (item 22).
 
-## Part B: complete through B8, in PR #18 — not merged
+## Part B: complete through B8, merged in PR #18
 
 The Jev decider in front of the approval gate: configuration and startup validation, offline
 isolation, the decider itself, the `assess` node before the gate, the deployment examples in `env/`,
-and ADR 0012. **It is on `feat/jev-decider` (PR #18), open and unmerged at Hamza's instruction.**
-ADR 0012 is the record of every design decision; read it rather than a summary here.
+and ADR 0012. ADR 0012 is the record of every design decision; read it rather than a summary here.
 
 ### Not done, and each needs Hamza's say-so
 
@@ -101,14 +100,13 @@ ADR 0012 is the record of every design decision; read it rather than a summary h
   decider can only run in shadow mode today.
 - **Calibration is not claimed**, and cannot be from a single probe.
 
-### Open decision, recorded as undecided
+### One commit is not green in a clean checkout — decided, left as is
 
-**Commit `a795e1f` on `feat/jev-decider` is not green in a clean checkout.** The `.gitignore` rule
-`env/`, there for virtualenvs, also excluded the new `env/sovereign.env` and `env/hybrid.env`, so
-that commit carries their test without the files; the next commit tracks them and narrows the rule
-to `!/env/`. The tip and CI are green. Hamza's leaning is to leave it, because rewriting pushed
-history costs more than the inconsistency — **but it is not decided.** Do not rewrite it, and do not
-treat it as settled either.
+**Commit `a795e1f` is not green in a clean checkout.** The `.gitignore` rule `env/`, there for
+virtualenvs, also excluded the new `env/sovereign.env` and `env/hybrid.env`, so that commit carries
+their test without the files; the next commit tracks them and narrows the rule to `!/env/`. The tip
+and CI are green. **Decided 2026-09-29: leave it.** Rewriting pushed history costs more than the
+inconsistency, and the commit is inside a merge commit now. Do not rewrite it.
 
 ## What comes next, in order
 
