@@ -449,18 +449,20 @@ def test_a_hybrid_deployment_still_uses_the_cloud_lane_for_public_content(
     assert models_asked_of(sovereign) == [SOVEREIGN_MODEL], (
         "classification should have run on the sovereign lane and nothing else should have"
     )
-    assert models_asked_of(cloud) == [CLOUD_CAPABLE], (
-        "the draft should have been asked of the cloud lane's capable tier"
+    assert models_asked_of(cloud) == [CLOUD_CHEAP], (
+        "the draft should have been asked of the tier policy routed it to"
     )
 
-    # Note which tier answered. `route_by_policy` returned "cloud_cheap" for this request and the
-    # drafter asked for the capable one, because the routed *tier* is not wired through either --
-    # `bind_lane` binds one and no channel carries it. Invisible in a deployment where both cloud
-    # tiers name the same model, which is the reference configuration. Leak inventory item 16;
-    # asserted here as the current truth so that wiring it has to come through this line.
+    # Which tier answered, and it is now the one that was chosen. `route_by_policy` returns
+    # "cloud_cheap" for a public, simple request; until leak inventory item 16 was closed the
+    # drafter asked for the capable one anyway, because `bind_lane` bound a tier and no channel
+    # carried it. This line was written asserting that defect as the current truth, precisely so
+    # that wiring the tier had to come through here -- and it did.
     lane_event = next(e for e in result["audit_trail"] if e["decided"] == "lane_selected")
     assert lane_event["detail"]["tier"] == Tier.CHEAP.value
-    assert models_asked_of(cloud) == [CLOUD_CAPABLE]
+    assert models_asked_of(cloud) == [CLOUD_CHEAP], (
+        "the trail says the cheap tier and the endpoint was asked for something else"
+    )
 
 
 # ------------------------------------------------ retrieval, which is a third egress entirely

@@ -27,10 +27,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from agentgate.audit.events import Decided, audit_event, digest
-from agentgate.config import CallClass, Settings, Tier, narrower_of
+from agentgate.config import CallClass, Settings, narrower_of
 from agentgate.effects.proposals import screen_proposals
 from agentgate.graph.completeness import research_gaps
-from agentgate.graph.state import AgentState, findings_of, lane_of
+from agentgate.graph.state import AgentState, findings_of, lane_of, tier_of
 from agentgate.guardrails.output import check_provenance
 from agentgate.guardrails.run_ledger import accounted, ledger_of
 from agentgate.models.registry import Capability, ModelFactory, build_resilient_model, supports
@@ -107,12 +107,22 @@ def draft(
     # lane the model was not built on would be the same defect wearing different clothes.
     routed = lane_of(state)
     effective = narrower_of(routed, settings.lane)
-    model_id = settings.model_for(Tier.CAPABLE, lane=effective)
+    # The routed tier, item 16's half of the same story: `bind_lane` chose one, recorded it in
+    # the trail, and until this channel existed the drafter asked for `CAPABLE` regardless. So
+    # a public, simple request routed to `cloud_cheap` changed the audit trail and nothing else.
+    #
+    # **Read once and used twice, deliberately.** The identifier below and the factory call
+    # under it both take this one value. Two reads is how the trail comes to name a model the
+    # endpoint was never asked for -- item 13's half-fix, and the one way this change could go
+    # wrong without anything turning red. Pinned by
+    # tests/integration/test_routed_tier.py::test_the_trail_names_the_model_that_actually_answered
+    tier = tier_of(state)
+    model_id = settings.model_for(tier, lane=effective)
     # Charged to the run. The agent's model-tool loop is invisible from here -- it may call the
     # model several times -- and every one of those calls goes through this model and so through
     # its ledger callback, which checks the ceiling after each.
     model = accounted(
-        model_factory(settings, Tier.CAPABLE, CallClass.SYNTHESIS, lane=routed), ledger_of(config)
+        model_factory(settings, tier, CallClass.SYNTHESIS, lane=routed), ledger_of(config)
     )
 
     agent = create_agent(

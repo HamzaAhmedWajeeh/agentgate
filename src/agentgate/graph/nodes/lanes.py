@@ -72,6 +72,11 @@ def bind_lane(node_name: str, lane: Lane, tier: Tier) -> LaneNode:
             # that round-trips through JSON as a string but is compared as an enum is a
             # resume-time surprise waiting to happen.
             "lane": lane.value,
+            # The other half of the routing decision, and the half that had nowhere to go
+            # until leak inventory item 16. Written next to the lane by the same node, from
+            # the same binding, so the two cannot drift apart. A plain string, like the lane
+            # and for the same checkpoint reason.
+            "tier": tier.value,
             "audit_trail": [
                 audit_event(
                     node=node_name,

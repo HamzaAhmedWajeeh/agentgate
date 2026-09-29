@@ -138,7 +138,9 @@ Things this build surfaced that were not on the original list, kept because each
 | Embedding requests can be observed on the wire | **done** | `retrieval/embeddings.py`; `tests/doubles/openai_compatible.py:decode_embedding_input` |
 | The stub server speaks SSE, so a networked lane can be driven from the CLI | **done** | `tests/doubles/openai_compatible.py`; `tests/integration/test_cli.py` |
 | An agentgate error from the CLI is reported, not traced | **done** | `cli.py:main`; `tests/integration/test_cli.py` |
-| Routed **tier** applied at model construction | not built | would need a `tier` channel in `graph/state.py`; `bind_lane` binds one and nothing carries it. Leak inventory item 16 |
+| Routed **tier** applied at model construction | **done** | `graph/state.py:tier` written by `bind_lane`, read by `graph/nodes/drafter.py` via `tier_of`. Leak inventory item 16 |
+| ↳ read off an endpoint, not off the trail | **done** (pinned) | `tests/integration/test_routed_tier.py` — two cloud tiers with different identifiers, because the reference configuration names one model for both and cannot tell them apart |
+| ↳ an absent tier channel resumes on the capable tier | **done** (pinned) | same file, `::test_a_checkpoint_written_before_the_channel_resumes_on_the_capable_tier`. Cost is not containment, so the default is today's behaviour rather than the cheaper one |
 | Crash mid-run resumes from the last checkpoint | **done** | `tests/integration/test_crash_and_resume.py` |
 | `partial` erases node signatures from mypy | **done** (pinned) | `tests/integration/test_toolchain_blind_spots.py` |
 | `interrupt_before` in invoke config is silently ignored | **done** (pinned) | `tests/integration/test_toolchain_blind_spots.py` |

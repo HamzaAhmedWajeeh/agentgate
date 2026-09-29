@@ -297,6 +297,10 @@ def test_the_model_that_answered_is_the_model_that_is_billed(cloud: StubServer) 
     alike in the reference configuration and a total cannot tell them apart.
     """
     settings = cloud_only_settings(cloud, max_retries=0)
+    # Involved, so the router sends the draft to the capable tier. Since leak inventory item 16
+    # closed, a simple request is drafted on the cheap tier -- and a run where the capable tier
+    # is never asked cannot demonstrate a fallback away from it.
+    cloud.behaviour.reply = {**verdict("public"), "complexity": "involved"}
     # The capable tier is down; the cheap tier is healthy. The drafter falls back.
     cloud.behaviour.reject = lambda body: body.get("model") == CLOUD_CAPABLE
 

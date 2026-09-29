@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The routed tier reaches model construction** (leak inventory item 16, closed). `bind_lane`
+  binds a tier as well as a lane; until now no channel carried it and the drafter asked for the
+  capable one regardless, so a public, simple request routed to `cloud_cheap` changed the audit
+  trail and nothing else. A `tier` state channel is written beside `lane` by the same node, and
+  the drafter reads it once for both its audit `model_id` and its factory call -- two reads is
+  how a trail comes to name a model the endpoint was never asked for.
+  `tests/integration/test_routed_tier.py` gives the two cloud tiers different identifiers, which
+  is what makes the difference visible at all: the reference configuration names one model for
+  both.
+- **An absent `tier` channel reads as the capable tier.** A checkpoint written before the channel
+  existed resumes exactly as it would have. This deliberately does not copy `lane_of`, which
+  fails closed to the most contained lane: containment has a safe direction and cost does not,
+  and resuming cheaper would answer a reviewer's rejection with a weaker draft than the one they
+  rejected. The cost is stated rather than hidden -- on such a checkpoint the lane event can say
+  `tier: cheap` while the resumed drafter asks for the capable model, bounded to runs started
+  before this change.
+
+### Changed
+
+- **The cheap tier now has a fallback: the cheap tier.** Previously it had none, on the grounds
+  that falling back *up* is an escalation -- which remains true, and escalating to the capable
+  tier stays rejected, because a fallback that costs more on exhaustion fires when nobody is
+  watching. But leaving the cheap tier without one would have made a cheap-routed request less
+  resilient than a capable-routed one, as a side effect of wiring a cost decision. **It is one
+  more attempt and not much else, and the row says so:** `langchain_openai` caches its default
+  httpx client on base URL, timeout and socket options, so the two leaves are separate client
+  objects sharing one connection pool. Measured in
+  `tests/unit/test_registry.py::test_the_cheap_tier_has_a_fallback_and_it_shares_the_transport`,
+  so a future version that stops sharing turns it red and the claim gets re-examined.
+
 - **Retries and fallbacks, reaching an endpoint at last** (leak inventory item 15, closed).
   `build_resilient_model` is now the model factory every model-calling node is given, so a
   transient provider failure is retried on the tier that failed and a durable one falls back to

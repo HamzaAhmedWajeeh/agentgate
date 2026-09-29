@@ -268,3 +268,73 @@ def test_replace_keeps_observations_immutable() -> None:
 
     assert original.supported is False
     assert upgraded.supported is True
+
+
+def networked(**overrides: object) -> Settings:
+    """A configuration whose tiers build real clients rather than the fake lane."""
+    return build(
+        lane="cloud",
+        openai_api_key="not-required",
+        openai_base_url="http://127.0.0.1:1/v1",
+        cloud_capable_model="capable-stub",
+        cloud_cheap_model="cheap-stub",
+        model_prices_usd_per_million={
+            "capable-stub": {"input": 1.0, "output": 4.0},
+            "cheap-stub": {"input": 0.1, "output": 0.4},
+        },
+        **overrides,
+    )
+
+
+def test_the_cheap_tier_has_a_fallback_and_it_shares_the_transport() -> None:
+    """What the cheap tier's fallback actually is, measured rather than assumed.
+
+    ADR 0004 item 16 decided the cheap tier falls back to the cheap tier rather than
+    escalating to the capable one. The obvious justification -- "a second attempt with a fresh
+    client, so a wedged connection pool is recovered" -- **is not true here**, and this test is
+    where that was found out. ``langchain_openai`` builds its default httpx client through a
+    cache keyed on base URL, timeout and socket options, so two leaves built from the same
+    settings get two ``ChatOpenAI`` objects, two ``openai.OpenAI`` wrappers, and **one
+    connection pool**.
+
+    So the cheap fallback is one more attempt through the same transport: worth the same as
+    raising ``max_retries`` by one, and worth saying so. The row says it plainly instead of
+    calling it resilience it does not have.
+
+    Pinned rather than written down, because it is a fact about a dependency. If a future
+    ``langchain-openai`` stops sharing the pool, this goes red and the claim in the row gets
+    re-examined -- which is the only honest way to hold an observation about someone else's
+    library.
+    """
+    chain = build_resilient_model(networked(), Tier.CHEAP, CallClass.SYNTHESIS)
+
+    assert chain.fallback is not None, (
+        "the cheap tier has no fallback, so a cheap-routed request is less resilient than a "
+        "capable-routed one -- a resilience change arriving as a side effect of a cost change"
+    )
+    assert chain.primary is not chain.fallback, "precondition: two leaves, not one reused"
+    assert chain.primary.model_name == chain.fallback.model_name == "cheap-stub", (
+        "the cheap tier fell back to a different model. Escalating to the capable tier on "
+        "exhaustion costs more at exactly the moment nobody is watching"
+    )
+    assert chain.primary.root_client is not chain.fallback.root_client, (
+        "precondition: the leaves hold separate SDK clients, which is the only sense in which "
+        "this is a fallback rather than a retry"
+    )
+    assert chain.primary.root_client._client is chain.fallback.root_client._client, (
+        "the leaves no longer share an httpx client. That would make the cheap fallback "
+        "genuinely more than one more retry, and ADR 0004 item 16 says the opposite -- "
+        "re-measure it and correct the row"
+    )
+
+
+def test_the_capable_tier_falls_back_to_a_genuinely_cheaper_model() -> None:
+    """The control for the assertion above: on the capable tier the fallback is a real one."""
+    chain = build_resilient_model(networked(), Tier.CAPABLE, CallClass.SYNTHESIS)
+
+    assert chain.primary.model_name == "capable-stub"
+    assert chain.fallback is not None
+    assert chain.fallback.model_name == "cheap-stub", (
+        "the capable tier did not degrade to the cheap one, so this file would be asserting "
+        "the same thing twice"
+    )
