@@ -314,21 +314,57 @@ hidden. It is bounded to checkpoints written before this change -- any run start
 carries the channel, and the two agree for the rest of that run, because nothing edges back to
 `classify` or the lane nodes and the channel is therefore written once.
 
-*The cheap tier falls back to the cheap tier, and that is one more retry.* Escalating to the
-capable tier was rejected: a fallback that costs more on exhaustion fires exactly when nobody is
-watching, and it would have arrived as a side effect of wiring a *cost* decision. So the cheap
-tier falls back to itself. **It is worth saying plainly what that is, because it is less than it
-sounds.** The justification would be "a second attempt with a fresh client, so a wedged
-connection pool is recovered" -- and that was measured and is **false here**.
-`langchain_openai` builds its default httpx client through a cache keyed on base URL, timeout
-and socket options, so the two leaves are two `ChatOpenAI` objects and two `openai.OpenAI`
-wrappers sharing **one connection pool**. The cheap fallback is therefore one more attempt
-through the same transport: exactly equivalent to raising `max_retries` by one. It is kept
-because a cheap-routed request having strictly less resilience than a capable-routed one would
-be a resilience regression delivered by a cost change -- but it is not called resilience it does
-not have. `tests/unit/test_registry.py::test_the_cheap_tier_has_a_fallback_and_it_shares_the_transport`
-holds the measurement, so a future `langchain-openai` that stops sharing the pool turns it red
-and this paragraph gets re-examined.
+*The cheap tier has no fallback, because a fallback there would make `max_retries` mean
+something other than what it says.* The only call that could sit beneath the cheap tier is
+another call to the same model, so a cheap-routed request would cost `max_retries + 2` provider
+calls. At `max_retries = 0` -- an operator saying *do not retry* -- that is two calls, the
+second one billed, on a request the deployment asked to have tried once. **That is a behaviour
+defect and not a vocabulary one**, and it is the reason for the decision. Pinned by
+`tests/integration/test_routed_tier.py::test_a_cheap_routed_request_makes_exactly_the_configured_number_of_calls`,
+parametrised over 0, 1 and 2, because a single case at 1 cannot tell "one retry and a fallback"
+from "two attempts and none", and 0 is the case that makes the point.
+
+**Cheap falling back to cheap was implemented first, then measured and removed.** The
+justification would have been "a second attempt with a fresh client, so a wedged connection pool
+is recovered". Measured on 2026-09-29, against `langchain-openai` 1.4.2, that is false here:
+`_get_default_httpx_client` is cached on base URL, timeout and socket options, so two leaves
+built from one `Settings` are two `ChatOpenAI` objects and two `openai.OpenAI` wrappers sharing
+**one httpx client and one connection pool** -- established by comparing
+`primary.root_client._client is fallback.root_client._client`, which is `True`. So it was one
+more attempt through the same transport, exactly equivalent to raising `max_retries` by one: a
+distinction without a difference. That measurement is recorded here as a dated fact rather than
+kept as a test, because a pin on a dependency's private attribute would go red on an upgrade for
+reasons that have nothing to do with this repository, and it would have existed only to defend a
+fallback that no longer exists. What is enforced instead is the shape --
+`tests/unit/test_registry.py::test_the_cheap_tier_has_no_fallback` -- and the call count on the
+wire.
+
+*Escalating the cheap tier to the capable one was rejected outright*, and separately: a fallback
+that costs more on exhaustion fires exactly when nobody is watching, and it would have arrived
+as a side effect of wiring a *cost* decision. The capable tier keeps its fallback because the
+call beneath it is a **different model** -- a degradation, not a spare attempt. The argument that
+the cheap tier should have one *for parity* with the capable tier is the argument that was
+rejected: there was never parity to lose, because what the capable chain has underneath it is a
+thing the cheap tier does not have a version of.
+
+**A consequence worth naming: a sovereign-routed request now has no fallback at all.** The
+sovereign lane binds the cheap tier, and the cheap tier has none -- so such a request is its
+retries and nothing else, one attempt fewer than before this change. That is the intended
+reading of the same rule (the only model beneath it would be itself), but it moves where the
+*lane* constraint can be observed. Only a `cloud_capable` route binds the tier that still has a
+fallback, so the fallback and the sovereign lane meet in exactly one shape: a sovereign-default
+deployment where `narrower_of` pulls a cloud-routed request home. That is where item 13's
+outage-direction guard now lives --
+`tests/integration/test_resilience_wiring.py::test_an_exhausted_fallback_never_crosses_to_the_cloud_endpoint`,
+which asserts the cloud lane was constructible before asserting nothing reached it, and goes red
+when `narrower_of` is removed from `build_model`. The older sovereign test kept its name and its
+job, which is that the *retry* chain stays on the endpoint the router chose.
+
+**The bet, stated as one.** This decision rests on a measurement of the deployment shapes that
+exist today, where both tiers of a lane share a base URL and a timeout and therefore a pool. If
+a distinct sovereign cheap model arrives, or per-tier base URLs do, cheap-to-cheap becomes a
+real fallback and this gets undone -- deliberately a bet on what is measured now rather than on
+what might be configured later, which is the same rule the capability matrix runs on.
 
 *Both drafter sites move together.* The audit `model_id` and the factory call read one `tier`
 local, once. Two reads is how a trail comes to name a model the endpoint was never asked for --

@@ -119,12 +119,13 @@ party. A run that cannot be served that way fails, which is the correct outcome:
 one moment nobody is watching for a leak. Read off two endpoints' request logs in
 `tests/integration/test_resilience_wiring.py`.
 
-**A request routed to the cheap tier falls back to the cheap tier, and that is one more attempt
-rather than a second chance.** It does not escalate to the capable tier, because a fallback that
-costs more on exhaustion fires when nobody is watching. The two leaves are separate client
-objects that share one connection pool — measured, not assumed — so this is worth the same as
-raising `max_retries` by one. It is kept so that a cheap-routed request is not less resilient
-than a capable-routed one, and it is not described as more than it is. ADR 0004 item 16.
+**A request routed to the cheap tier makes exactly `max_retries + 1` provider calls.** The cheap
+tier has no fallback, and that is so the setting means what it says: the only model beneath it is
+itself, so a fallback there would be one more billed call — two at `max_retries = 0`, where the
+operator asked for one. The capable tier keeps its fallback because the call beneath it is a
+different model, which is a degradation rather than a spare attempt. Falling back *up* a tier was
+never on the table: a fallback that costs more on exhaustion fires when nobody is watching.
+ADR 0004 item 16, which records that cheap-to-cheap was built, measured and removed.
 
 **Retries do not overrule the guards.** A ceiling crossed, a reply with no usage to account, a
 lane that cannot be built — these leave immediately rather than being retried as though they were
