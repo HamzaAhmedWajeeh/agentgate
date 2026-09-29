@@ -127,6 +127,23 @@ different model, which is a degradation rather than a spare attempt. Falling bac
 never on the table: a fallback that costs more on exhaustion fires when nobody is watching.
 ADR 0004 item 16, which records that cheap-to-cheap was built, measured and removed.
 
+**A sovereign deployment has no working fallback on any request. It makes `max_retries + 1`
+attempts and then the run fails.** This is the configuration recommended for air-gapped work, so
+it is worth stating where an operator will read it rather than only in an ADR. Three things
+compose to produce it, and none of them is wrong on its own:
+
+- the sovereign lane binds the **cheap** tier, so every restricted request is routed to it;
+- the cheap tier has no fallback, so that `max_retries` means retries (ADR 0004 item 16);
+- the sovereign lane has **one** model identifier for both tiers, so even the capable tier's
+  fallback — reached only by a public, involved request that `narrower_of` pulls home — degrades
+  to the same model through the same connection pool.
+
+So on that deployment the retry count is the whole of the resilience, and an endpoint that stays
+down for `max_retries + 1` attempts ends the run. **Failing is the intended outcome** — the
+alternative is a third party answering, which is the leak this project exists to prevent — but the
+absence of any degradation step is a property of the configuration, not an accident, and it is
+recorded as one.
+
 **Retries do not overrule the guards.** A ceiling crossed, a reply with no usage to account, a
 lane that cannot be built — these leave immediately rather than being retried as though they were
 the provider having a bad minute. That is ADR 0004 item 15, which stayed open for four phases

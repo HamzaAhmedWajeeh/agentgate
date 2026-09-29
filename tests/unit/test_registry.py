@@ -320,3 +320,49 @@ def test_the_capable_tier_falls_back_to_a_genuinely_cheaper_model() -> None:
         "the capable tier did not degrade to the cheap one, so this file would be asserting "
         "the same thing twice"
     )
+
+
+def sovereign_only(**overrides: object) -> Settings:
+    """An air-gapped deployment: the operator's own endpoint and nothing else."""
+    return build(
+        lane="sovereign",
+        sovereign_base_url="http://127.0.0.1:1/v1",
+        sovereign_model="sovereign-stub",
+        model_prices_usd_per_million={"sovereign-stub": {"input": 0.0, "output": 0.0}},
+        **overrides,
+    )
+
+
+def test_a_sovereign_deployment_has_no_working_fallback_on_either_tier() -> None:
+    """The composed consequence, pinned where the README claims it.
+
+    The README's limitations say an air-gapped deployment makes ``max_retries + 1`` attempts
+    and then fails. That claim is produced by three decisions meeting rather than by one, so
+    no single test of any of them holds it up:
+
+    - the sovereign lane binds the cheap tier, which has no fallback (ADR 0004 item 16);
+    - a public, involved request does reach the capable tier, via a ``cloud_capable`` route
+      that ``narrower_of`` pulls home -- so the capable tier is not unreachable here;
+    - but ``model_for`` resolves both tiers of the sovereign lane to one ``sovereign_model``,
+      so the capable tier's fallback degrades to the same model.
+
+    Asserted on the identifiers rather than on a call count because it is a statement about
+    every request on that deployment, not about one run. A README sentence with nothing
+    holding it is the thing this repository's inventory is a list of.
+    """
+    settings = sovereign_only()
+
+    cheap = build_resilient_model(settings, Tier.CHEAP, CallClass.SYNTHESIS)
+    assert cheap.fallback is None, "the cheap tier gained a fallback on the sovereign lane"
+
+    capable = build_resilient_model(settings, Tier.CAPABLE, CallClass.SYNTHESIS)
+    assert capable.fallback is not None, (
+        "the capable tier lost its fallback, so the claim below would hold for a different "
+        "reason than the one the README gives"
+    )
+    assert capable.primary.model_name == capable.fallback.model_name, (
+        "the sovereign lane now names two models, so its capable tier has a real degradation "
+        "step. The README's limitation and ADR 0004 item 16's undecided question both need "
+        f"revisiting: primary={capable.primary.model_name!r}, "
+        f"fallback={capable.fallback.model_name!r}"
+    )

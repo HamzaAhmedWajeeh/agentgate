@@ -347,14 +347,38 @@ the cheap tier should have one *for parity* with the capable tier is the argumen
 rejected: there was never parity to lose, because what the capable chain has underneath it is a
 thing the cheap tier does not have a version of.
 
-**A consequence worth naming: a sovereign-routed request now has no fallback at all.** The
-sovereign lane binds the cheap tier, and the cheap tier has none -- so such a request is its
-retries and nothing else, one attempt fewer than before this change. That is the intended
-reading of the same rule (the only model beneath it would be itself), but it moves where the
-*lane* constraint can be observed. Only a `cloud_capable` route binds the tier that still has a
-fallback, so the fallback and the sovereign lane meet in exactly one shape: a sovereign-default
-deployment where `narrower_of` pulls a cloud-routed request home. That is where item 13's
-outage-direction guard now lives --
+**The composed consequence: a sovereign deployment has no working fallback on any request.**
+Three decisions meet, and the third is the one that makes it total. The sovereign lane binds the
+cheap tier, so restricted requests land there and the cheap tier has no fallback. A public,
+involved request routes to `cloud_capable` and `narrower_of` pulls it home, so it does reach the
+one tier that still has a fallback -- but `model_for` resolves both tiers of the sovereign lane
+to the single `sovereign_model`, so that fallback degrades to the same model through the same
+connection pool. **It is the distinction without a difference this row just removed from the
+cheap tier, surviving on the capable tier only because a one-model lane cannot show it.**
+Measured 2026-09-29: on `lane=sovereign`, `build_resilient_model(..., CAPABLE, ...)` yields
+`primary.model_name == fallback.model_name == sovereign_model` with one shared httpx client.
+
+So an air-gapped deployment gets `max_retries + 1` attempts and then the run fails. Failing is
+the intended outcome -- the alternative is a third party answering -- and it is stated in the
+README's limitations rather than only here, because it is a property of the configuration this
+project recommends for exactly that use.
+
+**Is that the end state?** No: it is correct while the sovereign lane has one model to name, and
+it should be revisited the moment it has two -- a `sovereign_capable_model` and a
+`sovereign_cheap_model` would make the capable tier's fallback real on that lane and would reopen
+the cheap tier's question on its own terms. **Genuinely undecided, and recorded as such:** whether
+an air-gapped operator wants a degradation step at all, or would rather a run fail cleanly than
+return a weaker answer from a smaller local model. Nobody has asked one, and this repository does
+not invent an answer it has not measured. The trigger for reopening is a second sovereign model
+identifier, not a preference.
+
+**Where the lane constraint is still observed.** Removing the cheap tier's fallback moved it.
+Only a `cloud_capable` route binds the tier that still has one, so a fallback and the sovereign
+lane now meet in exactly one shape: the sovereign-default deployment above, where `narrower_of`
+pulls a cloud-routed request home. Both leaves name the same model there, so it degrades to
+nothing -- but it is still a second model *construction*, and therefore still a second chance to
+pick the wrong lane, which is the property under test. That is where item 13's outage-direction
+guard now lives --
 `tests/integration/test_resilience_wiring.py::test_an_exhausted_fallback_never_crosses_to_the_cloud_endpoint`,
 which asserts the cloud lane was constructible before asserting nothing reached it, and goes red
 when `narrower_of` is removed from `build_model`. The older sovereign test kept its name and its
