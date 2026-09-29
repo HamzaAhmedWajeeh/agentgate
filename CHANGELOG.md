@@ -26,11 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A retry no longer overrules a guard.** `with_retry` retries on every exception by default, and
-  the run ledger raises its ceiling error from inside the callback of the call that crossed it --
-  so wiring the resilient path turned a budget ceiling into four more billed calls after the run
-  was supposed to have stopped. Nothing deriving from `AgentgateError` is retried now. The two
-  ceiling tests in `tests/integration/test_run_ledger.py` are what caught it.
+- **A retry no longer overrules a guard** (leak inventory item 27, new and closed). `with_retry`
+  retries on every exception by default, and the run ledger raises its ceiling error from inside
+  the callback of the call that crossed it -- so a budget ceiling became four more billed calls
+  after the run was supposed to have stopped. Nothing deriving from `AgentgateError` is retried
+  now: it leaves the chain immediately, and the fallback is not offered it either. The defect was
+  in `build_resilient_model` from the day it was written and could not fail, because nothing
+  called it; the two ceiling tests in `tests/integration/test_run_ledger.py` went red in the first
+  full run after wiring. `tests/unit/test_resilient_model.py` pins the rule rather than the
+  ceiling, on both the invoke and the streaming path, each with a control showing a provider
+  failure on the same chain still is retried.
 - **The model that answered is the model that is billed.** `accounted` pushes the ledger callback
   down into a resilient model's leaves instead of wrapping the composite. A callback on the
   composite reads the primary's identifier from its own metadata, so a reply the cheap fallback

@@ -259,14 +259,9 @@ this row: a class the repository now maintains, where before there were two libr
 *Two defects were in the unwired code, and only wiring could find them.* Both would have shipped
 the day anything called it:
 
-- **A retry overruled the spend ceiling.** `with_retry` retries on every exception by default.
-  The run ledger raises `SpendCeilingExceededError` from inside the callback of the call that
-  crossed the ceiling, which to such a policy is indistinguishable from a 500 -- so the answer to
-  a budget ceiling was to call the provider again, and again, and then to fall back and call it
-  once more. Four billed calls after the run was supposed to have stopped. The rule now is that
-  nothing deriving from `AgentgateError` is ever retried: a guard is not a transient fault.
-  `tests/integration/test_run_ledger.py`'s two ceiling tests went red the moment the factory was
-  wired and are what found it; `test_a_ceiling_crossed_is_not_retried_past` names the rule.
+- **A retry overruled the spend ceiling.** Its own row: **item 27**, which has the figures, the
+  pins and the rule. It belongs there rather than here because it is not a cost of wiring -- it
+  is a defect wiring *found*, and it would have been a defect the day anything called this code.
 - **The fallback would have been billed to the wrong model.** `accounted` attached the ledger
   callback to whatever model it was given. On a composite that is one callback for the whole
   chain, reading the *primary's* identifier out of its own metadata -- so a reply the cheap
@@ -445,6 +440,19 @@ that provokes it, not to add a defensive branch.
 | **Moved with the topology** | The assess node (Part B, B5) sits between the supervisor and the gate with a static edge *into* the gate. An update with no node named is now credited to `assess`, so the run no longer ends: the gate runs again over the changed state and the pending resume applies to that fresh pass. The approval hash is what keeps it safe -- an approval carrying the hash of what was shown no longer matches and is refused. The behaviour moved; the guarantee did not, and both are pinned: `::test_in_agentgate_an_unnamed_update_re_enters_the_gate_and_a_stale_approval_is_refused` and `::test_in_agentgate_an_approval_written_as_the_gate_ends_the_run_and_reaches_nothing`. Found because the pin written before B5 failed the moment the two met. |
 | **Recorded** | Here, in the test, and in item 24's tampering test, which explains why it writes as the drafter. Version-specific: re-check on a `langgraph` upgrade. |
 | **Closed by** | Nothing to close in this code. Pinned so that a topology change, or an upgrade that changes the behaviour, is visible. |
+
+
+### 27. A retry policy retries this system's own refusals -- CLOSED
+
+| | |
+| --- | --- |
+| **Difference** | `with_retry` retries on **every** exception by default, and this system raises its refusals as exceptions: a crossed spend ceiling, a reply with no usage to account, a lane that cannot be built. The ledger raises `SpendCeilingExceededError` from inside the callback of the call that crossed the ceiling, so to that policy it is indistinguishable from a 500. **The answer to a budget guard was four more billed calls** -- three attempts on the capable tier and one on the fallback, every one of them a real request made after the run had already decided to stop. A ceiling that a retry can walk past is not a ceiling. |
+| **How established** | Not by reading. `tests/integration/test_run_ledger.py::test_the_ceiling_trips_at_classification_and_nothing_follows` and `::test_the_ceiling_trips_inside_the_drafter_loop` went red the moment `build_resilient_model` became the factory the graph injects, and the captured log said it plainly: *run consumed 2627 tokens, over the ceiling of 2029*, then 3225, then 3823, then 4421. The second test asserted one capable-tier call and counted three. |
+| **Latent for four phases** | The defect was in `build_resilient_model` from the day it was written. It could not fail, because **nothing called it** -- item 15. Its own test file constructs the chain itself and never involves a ledger, so the retry policy was exercised for four phases without once meeting a guard. This is the item 15 lesson with the arrow reversed: *a function tested in isolation is evidence about the function, not about the system* also means an unwired component's defects are not dormant, they are unobservable. **Only wiring could find this**, and wiring found it in the first full test run. |
+| **Evidence** | `tests/unit/test_resilient_model.py` pins the rule rather than the instance: a refusal is attempted once and never answered by the fallback, on both the invoke and the streaming path, each paired with a control showing a provider failure on the same chain *is* retried and *does* fall back -- without which every assertion holds equally against a chain that retries nothing. `tests/integration/test_resilience_wiring.py::test_a_ceiling_crossed_is_not_retried_past` pins it end to end through the graph: ceiling of one token, exactly one request reaches the endpoint. Mutation-checked by removing the re-raise from each attempt loop separately, since `_generate` and `_stream` carry one each and a fix in one of them is not a fix. |
+| **Consequence** | **A guard is not a transient fault.** Nothing deriving from `AgentgateError` is retried; it leaves the chain immediately, by the same path whether the primary or the fallback raised it. The fallback half matters as much as the retry half: a guard that stopped the capable tier and let the cheap one answer would have been overruled more quietly still, with the run carrying on past a ceiling that had already tripped, on a model nobody chose. The rule generalises to any guard added later rather than being a special case for the ledger. |
+| **Recorded** | Here, in `models/resilient.py`'s module docstring, and in both pins. |
+| **Closed by** | The `except AgentgateError: raise` clause at the head of both attempt loops in `models/resilient.py`, landed with the item 15 wiring. |
 
 ## Closing item 17: the index is the hard part
 
