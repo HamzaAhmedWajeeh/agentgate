@@ -119,6 +119,13 @@ party. A run that cannot be served that way fails, which is the correct outcome:
 one moment nobody is watching for a leak. Read off two endpoints' request logs in
 `tests/integration/test_resilience_wiring.py`.
 
+**A request routed to the cheap tier falls back to the cheap tier, and that is one more attempt
+rather than a second chance.** It does not escalate to the capable tier, because a fallback that
+costs more on exhaustion fires when nobody is watching. The two leaves are separate client
+objects that share one connection pool — measured, not assumed — so this is worth the same as
+raising `max_retries` by one. It is kept so that a cheap-routed request is not less resilient
+than a capable-routed one, and it is not described as more than it is. ADR 0004 item 16.
+
 **Retries do not overrule the guards.** A ceiling crossed, a reply with no usage to account, a
 lane that cannot be built — these leave immediately rather than being retried as though they were
 the provider having a bad minute. That is ADR 0004 item 15, which stayed open for four phases
@@ -147,9 +154,12 @@ client sends -- token ids or strings -- rather than a grep of the raw body (item
   distinct terms, and not beyond it. A corpus an order of magnitude larger has to be re-measured.
 - **Past the approval gate is not pinned.** A rejected draft is revised on the same routed lane,
   and no wire test follows it there.
-- **Still open**: the routed tier is not applied (item 16), so a request the router sent to the
-  cheap tier is drafted by the capable one. Invisible in the reference configuration, where both
-  cloud tiers name the same model.
+- **A checkpoint written before the tier channel existed resumes on the capable tier**, which is
+  what every drafted request used before it. So the lane event on such a run can say `tier: cheap`
+  while the resumed drafter asks for the capable model. That is bounded to checkpoints written
+  before the change, and it is the deliberate direction: cost has no safe default the way
+  containment does, and resuming cheaper would answer a reviewer's rejection with a weaker draft
+  than the one they rejected.
 
 **Classification runs on the most contained lane available, which on a cloud-only deployment is
 the cloud.** The raw request is shown to the third party in order to decide whether it was

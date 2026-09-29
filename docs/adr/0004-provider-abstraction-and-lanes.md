@@ -284,7 +284,7 @@ so the absence is about a run that had something to leak.
 thing below it is the capable tier and falling back *up* is an escalation in cost rather than a
 degradation in quality. So a classification failure that outlasts its retries still ends the run.
 
-### 16. The routed tier never reached model construction either
+### 16. The routed tier never reached model construction either -- CLOSED
 
 | | |
 | --- | --- |
@@ -292,9 +292,63 @@ degradation in quality. So a classification failure that outlasts its retries st
 | **How established** | Observed on the wire in the same two-endpoint harness. A public, simple request routes to `cloud_cheap`, the lane event records `tier: cheap`, and the cloud endpoint is asked for the **capable** model. |
 | **Evidence** | `tests/integration/test_routed_lane_enforcement.py::test_a_hybrid_deployment_still_uses_the_cloud_lane_for_public_content` asserts both halves as the current truth, so wiring the tier has to come through that line. `docs/concept-map.md` carries the row as *not built*. |
 | **Consequence** | Invisible in the reference configuration, because both cloud tiers name the same model -- which is itself deliberate and documented, the split being a policy boundary rather than a cost claim. That is exactly why it survived: the one deployment shape that would reveal it is the one nobody runs. |
-| **Deliberately not fixed here** | It needs a `tier` channel in `AgentState`, which is a schema change and a checkpoint-compatibility question, and it is a cost decision rather than a containment one. Item 13 was neither. |
 | **Recorded** | Here and in the concept map. |
-| **Closed by** | Nothing yet. |
+| **Closed by** | A `tier` channel in `AgentState`, written by `bind_lane` beside the lane it already wrote, read by `graph/nodes/drafter.py` through `state.py:tier_of`. Pinned by `tests/integration/test_routed_tier.py`, which gives the two cloud tiers different identifiers and reads which one the endpoint was asked for -- the same trick item 13 needed, for the same reason. |
+
+**The decisions, 2026-09-29.**
+
+*An absent channel reads as `CAPABLE`.* A checkpoint written before the channel existed resumes
+exactly as it would have, and the one direction this default can be wrong in is **more
+expensive, never worse**. `tier_of` deliberately does not copy `lane_of`, which fails closed to
+`SOVEREIGN`: containment has a safe direction and cost does not. Defaulting to the cheap tier
+would let a run paused at the gate come back, after a rejection, with a weaker answer than the
+one the reviewer was looking at -- and nothing in the trail would show the downgrade, because
+the revision is simply the next draft. Re-deriving the tier from `classification` was rejected
+outright: that is a second home for the routing rule, which is the `narrower_of` mistake in new
+clothes.
+
+**What this default costs, stated exactly.** On a checkpoint written before the channel that
+carried a `cloud_cheap` route, **the trail and the behaviour disagree**: the lane event says
+`tier: cheap` and the resumed drafter asks for the capable model. That is real and it is not
+hidden. It is bounded to checkpoints written before this change -- any run started after it
+carries the channel, and the two agree for the rest of that run, because nothing edges back to
+`classify` or the lane nodes and the channel is therefore written once.
+
+*The cheap tier falls back to the cheap tier, and that is one more retry.* Escalating to the
+capable tier was rejected: a fallback that costs more on exhaustion fires exactly when nobody is
+watching, and it would have arrived as a side effect of wiring a *cost* decision. So the cheap
+tier falls back to itself. **It is worth saying plainly what that is, because it is less than it
+sounds.** The justification would be "a second attempt with a fresh client, so a wedged
+connection pool is recovered" -- and that was measured and is **false here**.
+`langchain_openai` builds its default httpx client through a cache keyed on base URL, timeout
+and socket options, so the two leaves are two `ChatOpenAI` objects and two `openai.OpenAI`
+wrappers sharing **one connection pool**. The cheap fallback is therefore one more attempt
+through the same transport: exactly equivalent to raising `max_retries` by one. It is kept
+because a cheap-routed request having strictly less resilience than a capable-routed one would
+be a resilience regression delivered by a cost change -- but it is not called resilience it does
+not have. `tests/unit/test_registry.py::test_the_cheap_tier_has_a_fallback_and_it_shares_the_transport`
+holds the measurement, so a future `langchain-openai` that stops sharing the pool turns it red
+and this paragraph gets re-examined.
+
+*Both drafter sites move together.* The audit `model_id` and the factory call read one `tier`
+local, once. Two reads is how a trail comes to name a model the endpoint was never asked for --
+item 13's half-fix, and the only way this change goes wrong without anything turning red. There
+is a mutation for each direction and a test for each:
+`::test_the_trail_names_the_model_that_actually_answered` compares the drafting event's model
+against the model on the wire, and goes red when either site moves alone.
+
+*A tier decision cannot widen a lane.* The tier is chosen inside a lane, and both leaves of the
+chain are built from the routed lane. `::test_no_tier_decision_widens_the_lane` spends a
+sovereign-routed cheap chain, retries and fallback, against a sovereign endpoint that is down,
+on a deployment where the cloud lane is reachable -- and the cloud endpoint's log is empty.
+
+*What the old checkpoint test cost to write.* The first version wrote the channel-clearing
+update with `as_node="drafter"`, which moved `next` from `approval_gate` to `supervisor` and
+**consumed the pause** -- item 26, met in the wild. The resume then re-entered the gate without
+drafting, and the assertion failed for a reason that had nothing to do with tiers. With no node
+named, the update is credited to `assess`, which has a static edge into the gate, so the pending
+resume applies to a fresh pass through it. The test now asserts `next == ("approval_gate",)`
+before resuming, so that trap cannot reappear silently.
 
 ### 17. Retrieval embeds on the configured lane, ignoring the route — CLOSED on hybrid deployments
 
