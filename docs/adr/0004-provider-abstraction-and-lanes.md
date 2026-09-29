@@ -342,13 +342,11 @@ chain are built from the routed lane. `::test_no_tier_decision_widens_the_lane` 
 sovereign-routed cheap chain, retries and fallback, against a sovereign endpoint that is down,
 on a deployment where the cloud lane is reachable -- and the cloud endpoint's log is empty.
 
-*What the old checkpoint test cost to write.* The first version wrote the channel-clearing
-update with `as_node="drafter"`, which moved `next` from `approval_gate` to `supervisor` and
-**consumed the pause** -- item 26, met in the wild. The resume then re-entered the gate without
-drafting, and the assertion failed for a reason that had nothing to do with tiers. With no node
-named, the update is credited to `assess`, which has a static edge into the gate, so the pending
-resume applies to a fresh pass through it. The test now asserts `next == ("approval_gate",)`
-before resuming, so that trap cannot reappear silently.
+*What the old checkpoint test cost to write.* It has to clear a channel on a run paused at the
+gate, and the first attempt did that with `as_node="drafter"`, which consumed the pause. **That
+is item 26, met in the wild for the second time**, and the account lives in that row rather than
+here -- including the part that matters to anyone writing a similar test, which is that the fix
+was the absence of `as_node` rather than a better value for it.
 
 ### 17. Retrieval embeds on the configured lane, ignoring the route — CLOSED on hybrid deployments
 
@@ -492,7 +490,9 @@ that provokes it, not to add a defensive branch.
 | **Evidence** | `tests/integration/test_toolchain_blind_spots.py::test_a_state_update_written_as_the_paused_node_walks_past_its_interrupt`, with `::test_without_the_update_the_same_resume_delivers_the_decision` as its control. `::test_in_agentgate_an_update_at_the_gate_ends_the_run_and_can_reach_nothing` pins why this graph survives, including an approval written *as the gate*. Mutation-checked: a static edge from `approval_gate` to `execute` turns that case red -- the approval walks through to `execute`. |
 | **Consequence** | This graph is safe because of topology, and now provably so: the approval gate leaves only by `Command`, with no static edge out, and `execute` re-checks the decision and the approval hash on its own. **The rule for anyone editing the graph:** an interrupting node must never gain a static successor that acts, or a state update can approve on a human's behalf. Tests that change state between a pause and a resume must write as a node *upstream* of the pause and route back through it -- which is what item 24's test now does -- or they are asserting about a run that ended. Same family as items 4, 22 and 25: a toolchain behaviour that is not an error. |
 | **Moved with the topology** | The assess node (Part B, B5) sits between the supervisor and the gate with a static edge *into* the gate. An update with no node named is now credited to `assess`, so the run no longer ends: the gate runs again over the changed state and the pending resume applies to that fresh pass. The approval hash is what keeps it safe -- an approval carrying the hash of what was shown no longer matches and is refused. The behaviour moved; the guarantee did not, and both are pinned: `::test_in_agentgate_an_unnamed_update_re_enters_the_gate_and_a_stale_approval_is_refused` and `::test_in_agentgate_an_approval_written_as_the_gate_ends_the_run_and_reaches_nothing`. Found because the pin written before B5 failed the moment the two met. |
-| **Recorded** | Here, in the test, and in item 24's tampering test, which explains why it writes as the drafter. Version-specific: re-check on a `langgraph` upgrade. |
+| **Met a second time, in the wild** | While writing item 16's old-checkpoint test, 2026-09-29. That test has to clear the `tier` channel on a run paused at the gate, and the first version wrote the update as `as_node="drafter"` -- an upstream node, which is what this row's own advice sounded like. It moved `next` from `('approval_gate',)` to `('supervisor',)`, **consuming the pause**: the resume re-entered the gate without drafting, and the assertion failed reporting that the revision never reached the drafter -- a message pointing at tiers, about a defect that had nothing to do with them. It cost a debugging round to find, and the diagnosis was the `next` tuple, not the test output. **The fix was the absence of `as_node`, not a different value for it.** With no node named the update is credited to the last writer, `assess`, whose static edge into the gate is what makes the pending resume apply to a fresh pass. The test now asserts `next == ("approval_gate",)` immediately after the update, so the trap cannot reappear silently; `tests/integration/test_routed_tier.py::test_a_checkpoint_written_before_the_channel_resumes_on_the_capable_tier`. |
+| **What the second occurrence changes** | The rule was written as "write as a node upstream of the pause and route back through it", and that phrasing is what led straight into the trap: `drafter` *is* upstream, and naming it still consumed the pause, because naming a node sets where the run continues from. The rule that actually holds is narrower and is now the one recorded: **a test changing state around a pause names no node at all.** Two occurrences is also the evidence that this is a property of the toolchain rather than a quirk of one test -- the first was found by an absence assertion passing for the wrong reason, the second by a presence assertion failing for the wrong reason, which are the two ways it can present. |
+| **Recorded** | Here, in the test, in item 24's tampering test, which explains why it writes as the drafter, and in item 16's old-checkpoint test, which explains why it names nothing. Version-specific: re-check on a `langgraph` upgrade. |
 | **Closed by** | Nothing to close in this code. Pinned so that a topology change, or an upgrade that changes the behaviour, is visible. |
 
 
