@@ -31,6 +31,7 @@ from agentgate.graph.build import build_checkpointer, build_graph, run_config
 from agentgate.graph.state import Finding, initial_state
 from agentgate.guardrails.run_ledger import RUN_LEDGER
 from agentgate.guardrails.spend import SpendCeilingExceededError
+from agentgate.models.registry import require_lane
 
 pytestmark = pytest.mark.usefixtures("isolated_env")
 
@@ -229,21 +230,25 @@ def test_a_sovereign_retry_stays_on_the_sovereign_endpoint(
     )
 
 
-def test_an_exhausted_sovereign_lane_never_falls_back_to_the_cloud_endpoint(
+def test_an_exhausted_sovereign_lane_never_reaches_the_cloud_endpoint(
     cloud: StubServer, sovereign: StubServer
 ) -> None:
     """The canary. An outage must not do what the router refused to do.
 
     The sovereign endpoint answers the classifier and then goes down, so the failure lands on
-    the drafter -- the capable tier, the one call in the system that *has* a fallback. Every
-    attempt is spent and the run fails. Failing is the correct outcome: a draft produced by a
-    third party out of restricted case notes would be leak 13, triggered by an outage instead
-    of by a routing bug, at the moment nobody is watching for it.
+    the drafter. Every attempt is spent and the run fails. Failing is the correct outcome: a
+    draft produced by a third party out of restricted case notes would be leak 13, triggered by
+    an outage instead of by a routing bug, at the moment nobody is watching for it.
+
+    **This one exercises the retry chain, not the fallback**, and that is a consequence of
+    ADR 0004 item 16 rather than a weakening of the test. The sovereign lane binds the *cheap*
+    tier, and since item 16 the cheap tier has no fallback -- so a sovereign-routed request is
+    its retries and nothing else. The fallback's own version of this constraint is the test
+    below, which needs a deployment shape where a capable chain lands on the sovereign lane.
 
     Three assertions, and the first two are what stop the third being vacuous:
 
-    - the sovereign endpoint saw the classifier's call *and* the drafter's whole chain, so a
-      fallback really was attempted rather than skipped;
+    - the sovereign endpoint saw the classifier's call *and* the drafter's whole chain;
     - the restricted findings reached that endpoint, so there was content available to leak;
     - nothing whatsoever reached the cloud endpoint.
     """
@@ -255,19 +260,86 @@ def test_an_exhausted_sovereign_lane_never_falls_back_to_the_cloud_endpoint(
         run_restricted_to_the_gate(settings)
 
     attempts_after_classification = sovereign.behaviour.request_count - 1
+    assert attempts_after_classification == settings.max_retries + 1, (
+        f"the drafter made {attempts_after_classification} attempt(s) on the sovereign "
+        f"endpoint; {settings.max_retries + 1} were due. A chain with attempts left cannot "
+        "demonstrate where it would have gone when it ran out"
+    )
+    assert canaries_seen_by(sovereign, DRAFT_CANARIES) == sorted(DRAFT_CANARIES), (
+        "the drafter never sent the restricted findings anywhere, so there was nothing to "
+        "leak and the assertion below would pass for the wrong reason"
+    )
+    assert cloud.behaviour.every_request == [], (
+        "the sovereign lane failed and the chain crossed to the third-party endpoint. "
+        "Leak inventory item 13, triggered by an outage"
+    )
+
+
+def sovereign_default_settings(
+    cloud: StubServer, sovereign: StubServer, *, max_retries: int
+) -> Settings:
+    """A deployment that prefers its own endpoint but has a cloud one configured.
+
+    The only shape in which a **capable** chain -- the one tier that still has a fallback --
+    lands on the sovereign lane: the router sends a public, involved request to `cloud_capable`
+    and `narrower_of` pulls the whole thing back to sovereign. So the fallback exists, it is
+    built from a route that named the cloud, and the cloud endpoint is reachable. If it were
+    ever going to widen a lane, it would be here.
+    """
+    return Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        lane=Lane.SOVEREIGN.value,
+        openai_api_key="not-required",
+        openai_base_url=cloud.base_url,
+        cloud_capable_model=CLOUD_CAPABLE,
+        cloud_cheap_model=CLOUD_CHEAP,
+        sovereign_base_url=sovereign.base_url,
+        sovereign_model=SOVEREIGN_MODEL,
+        max_retries=max_retries,
+        model_prices_usd_per_million=PRICES,
+    )
+
+
+def test_an_exhausted_fallback_never_crosses_to_the_cloud_endpoint(
+    cloud: StubServer, sovereign: StubServer
+) -> None:
+    """The fallback's own version of the constraint, in the one shape that can express it.
+
+    A fallback is a second model, so it is a second chance to pick the wrong lane -- and it
+    fires during an outage, which is when nobody is reading audit trails. Since ADR 0004 item
+    16 only the capable tier has one, and only a `cloud_capable` route binds that tier, so the
+    fallback and the sovereign lane meet in exactly one configuration: a sovereign-default
+    deployment where `narrower_of` pulls a cloud-routed request home. That is this test.
+
+    The presence half is the attempt count: the whole chain, retries *and* fallback, has to
+    have been spent on the sovereign endpoint before its absence from the cloud one means
+    anything.
+    """
+    settings = sovereign_default_settings(cloud, sovereign, max_retries=1)
+    # The absence assertion below is worthless against a deployment that could not have
+    # reached the cloud lane anyway. This is the precondition that it could.
+    require_lane(settings, Lane.CLOUD)
+    sovereign.behaviour.reply = {**verdict("public"), "complexity": "involved"}
+    # Down from the second request on: the classifier is answered, the drafter is not.
+    sovereign.behaviour.reject = lambda _body: sovereign.behaviour.request_count > 1
+
+    graph = build_graph(settings, build_checkpointer(settings))
+    state = initial_state(PUBLIC_REQUEST, str(uuid.uuid4()))
+    state["dispatched"] = 1
+    state["findings"] = [RESTRICTED_FINDING.as_channel()]
+    with pytest.raises(Exception, match=r"(?i)error|500"):
+        graph.invoke(state, run_config(settings, str(uuid.uuid4())))
+
+    attempts_after_classification = sovereign.behaviour.request_count - 1
     assert attempts_after_classification == settings.max_retries + 2, (
         f"the drafter made {attempts_after_classification} attempt(s) on the sovereign "
         f"endpoint; {settings.max_retries + 1} retried attempts plus one fallback were due. "
         "A fallback that was never attempted cannot demonstrate where it would have gone"
     )
-    assert canaries_seen_by(sovereign, DRAFT_CANARIES) == sorted(DRAFT_CANARIES), (
-        "the drafter never sent the restricted findings anywhere, so there was nothing for a "
-        "fallback to leak and the assertion below would pass for the wrong reason"
-    )
     assert cloud.behaviour.every_request == [], (
-        "the sovereign lane failed and the fallback crossed to the third-party endpoint. "
-        "A fallback may narrow the lane and never widen it -- leak inventory item 13, "
-        "triggered by an outage"
+        "the fallback crossed to the third-party endpoint after the deployment narrowed the "
+        "route home. A fallback may narrow the lane and never widen it -- leak inventory "
+        "item 13, triggered by an outage"
     )
 
 

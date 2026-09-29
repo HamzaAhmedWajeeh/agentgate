@@ -286,46 +286,28 @@ def networked(**overrides: object) -> Settings:
     )
 
 
-def test_the_cheap_tier_has_a_fallback_and_it_shares_the_transport() -> None:
-    """What the cheap tier's fallback actually is, measured rather than assumed.
+def test_the_cheap_tier_has_no_fallback() -> None:
+    """So that ``max_retries`` means retries, including when it means none.
 
-    ADR 0004 item 16 decided the cheap tier falls back to the cheap tier rather than
-    escalating to the capable one. The obvious justification -- "a second attempt with a fresh
-    client, so a wedged connection pool is recovered" -- **is not true here**, and this test is
-    where that was found out. ``langchain_openai`` builds its default httpx client through a
-    cache keyed on base URL, timeout and socket options, so two leaves built from the same
-    settings get two ``ChatOpenAI`` objects, two ``openai.OpenAI`` wrappers, and **one
-    connection pool**.
+    The only call that could sit beneath the cheap tier is another call to the same model, so
+    a fallback there would make a cheap-routed request cost ``max_retries + 2`` provider calls
+    -- two at ``max_retries=0``, where the operator asked for one. That is a behaviour defect
+    rather than a naming one, and it is why ADR 0004 item 16 rejected cheap-to-cheap after
+    trying it.
 
-    So the cheap fallback is one more attempt through the same transport: worth the same as
-    raising ``max_retries`` by one, and worth saying so. The row says it plainly instead of
-    calling it resilience it does not have.
-
-    Pinned rather than written down, because it is a fact about a dependency. If a future
-    ``langchain-openai`` stops sharing the pool, this goes red and the claim in the row gets
-    re-examined -- which is the only honest way to hold an observation about someone else's
-    library.
+    Asserted on the shape rather than on a call count, which
+    ``tests/integration/test_routed_tier.py`` reads off an endpoint. The earlier version of
+    this test asserted that the two leaves shared an httpx connection pool -- true, and the
+    measurement that settled the decision, but it pinned a dependency's private attribute to
+    defend a fallback that no longer exists. The measurement is a dated fact in the row now.
     """
     chain = build_resilient_model(networked(), Tier.CHEAP, CallClass.SYNTHESIS)
 
-    assert chain.fallback is not None, (
-        "the cheap tier has no fallback, so a cheap-routed request is less resilient than a "
-        "capable-routed one -- a resilience change arriving as a side effect of a cost change"
+    assert chain.fallback is None, (
+        "the cheap tier has a fallback, so a cheap-routed request makes one more provider "
+        "call than max_retries allows for"
     )
-    assert chain.primary is not chain.fallback, "precondition: two leaves, not one reused"
-    assert chain.primary.model_name == chain.fallback.model_name == "cheap-stub", (
-        "the cheap tier fell back to a different model. Escalating to the capable tier on "
-        "exhaustion costs more at exactly the moment nobody is watching"
-    )
-    assert chain.primary.root_client is not chain.fallback.root_client, (
-        "precondition: the leaves hold separate SDK clients, which is the only sense in which "
-        "this is a fallback rather than a retry"
-    )
-    assert chain.primary.root_client._client is chain.fallback.root_client._client, (
-        "the leaves no longer share an httpx client. That would make the cheap fallback "
-        "genuinely more than one more retry, and ADR 0004 item 16 says the opposite -- "
-        "re-measure it and correct the row"
-    )
+    assert chain.primary.model_name == "cheap-stub", "precondition: the cheap tier was built"
 
 
 def test_the_capable_tier_falls_back_to_a_genuinely_cheaper_model() -> None:

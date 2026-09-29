@@ -28,16 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The cheap tier now has a fallback: the cheap tier.** Previously it had none, on the grounds
-  that falling back *up* is an escalation -- which remains true, and escalating to the capable
-  tier stays rejected, because a fallback that costs more on exhaustion fires when nobody is
-  watching. But leaving the cheap tier without one would have made a cheap-routed request less
-  resilient than a capable-routed one, as a side effect of wiring a cost decision. **It is one
-  more attempt and not much else, and the row says so:** `langchain_openai` caches its default
-  httpx client on base URL, timeout and socket options, so the two leaves are separate client
-  objects sharing one connection pool. Measured in
-  `tests/unit/test_registry.py::test_the_cheap_tier_has_a_fallback_and_it_shares_the_transport`,
-  so a future version that stops sharing turns it red and the claim gets re-examined.
+- **A cheap-routed request makes exactly `max_retries + 1` provider calls.** The cheap tier has
+  no fallback, so the setting means what it says. The only model beneath it is itself, so a
+  fallback there would be one more billed call -- two at `max_retries = 0`, where the operator
+  asked for one. Cheap-to-cheap was built first and removed after measuring it:
+  `langchain-openai` caches its default httpx client on base URL, timeout and socket options, so
+  the two leaves shared one connection pool and the "fallback" was one more retry through the
+  same transport. The measurement is a dated fact in ADR 0004 item 16 rather than a test, since
+  pinning a dependency's private attribute would break on an upgrade for unrelated reasons. The
+  capable tier keeps its fallback, because the call beneath it is a different model.
 
 - **Retries and fallbacks, reaching an endpoint at last** (leak inventory item 15, closed).
   `build_resilient_model` is now the model factory every model-calling node is given, so a

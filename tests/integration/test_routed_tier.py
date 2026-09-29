@@ -317,41 +317,78 @@ def test_a_checkpoint_written_before_the_channel_resumes_on_the_capable_tier(
     assert result.get("draft"), "the resumed run did not complete"
 
 
-# ------------------------------------------------------------------- the tier and the fallback
+# ------------------------------------------------------------------- the tier and max_retries
 
 
-def test_a_cheap_routed_request_still_has_a_fallback(cloud: StubServer) -> None:
-    """Wiring a cost decision must not quietly remove a resilience one.
+@pytest.mark.parametrize("max_retries", [0, 1, 2])
+def test_a_cheap_routed_request_makes_exactly_the_configured_number_of_calls(
+    cloud: StubServer, max_retries: int
+) -> None:
+    """``max_retries`` means retries, including when it means none.
 
-    Until the routed tier existed every drafter call was capable and so had a fallback
-    beneath it. A cheap tier with nothing below it would hand that back as a side effect --
-    invisible in the reference configuration, where both tiers name the same model anyway.
+    This is the reason the cheap tier has no fallback, and it is a behaviour defect rather
+    than a naming one. A fallback beneath the cheap tier is another call to the same model
+    through the same connection pool, so a cheap-routed request would make
+    ``max_retries + 2`` provider calls. At ``max_retries=0`` -- an operator saying *do not
+    retry* -- that is two. The setting would not mean what it says, and the extra call would be
+    billed, on a request the deployment had asked to be tried once.
+
+    The capable tier keeps its fallback because the call beneath it is a **different model**:
+    a degradation, not a spare attempt. ADR 0004 item 16.
+
+    Parametrised deliberately. A single case at ``max_retries=1`` cannot tell "one retry plus a
+    fallback" from "two attempts and no fallback", and zero is the case that makes the point.
     """
+    settings = cloud_only_settings(cloud, max_retries=max_retries)
+    # The drafter's every attempt fails, so the log shows the whole chain rather than however
+    # much of it the first success happened to use.
+    cloud.behaviour.reject = lambda body: DRAFTER_MARKER in json.dumps(body, sort_keys=True)
+
+    graph = build_graph(settings, build_checkpointer(settings))
+    with pytest.raises(Exception, match=r"(?i)error|500"):
+        graph.invoke(seeded(SIMPLE_PUBLIC_REQUEST), run_config(settings, str(uuid.uuid4())))
+
+    asked = drafter_requests(cloud)
+    assert asked, "the drafter never reached the endpoint, so no count was measured"
+    assert len(asked) == max_retries + 1, (
+        f"the drafter made {len(asked)} provider call(s) with max_retries={max_retries}; "
+        f"{max_retries + 1} were due. An extra call here is a fallback to the same model "
+        "through the same connection pool -- one more retry, billed, on a request the "
+        "operator configured not to retry that many times"
+    )
+    assert [str(body.get("model", "")) for body in asked] == [CLOUD_CHEAP] * len(asked), (
+        "a cheap-routed attempt asked for another tier. Escalating on exhaustion costs more "
+        f"at exactly the moment nobody is watching. Asked for: "
+        f"{[str(body.get('model', '')) for body in asked]}"
+    )
+
+
+def test_a_capable_routed_request_still_degrades_to_the_cheap_model(cloud: StubServer) -> None:
+    """The control, and the distinction the decision above rests on.
+
+    Without it, "the cheap tier makes exactly its retries" holds just as well against a build
+    with no fallbacks at all -- and the capable tier's fallback is the thing that makes the
+    cheap tier's absence a considered asymmetry rather than an oversight.
+    """
+    cloud.behaviour.reply = verdict("public", "involved")
     settings = cloud_only_settings(cloud, max_retries=1)
-    # The cheap tier fails its retries; only the attempt after them can answer.
     cloud.behaviour.reject = lambda body: (
-        body.get("model") == CLOUD_CHEAP
-        and DRAFTER_MARKER in json.dumps(body, sort_keys=True)
-        and len(drafter_requests(cloud)) <= settings.max_retries + 1
+        body.get("model") == CLOUD_CAPABLE and DRAFTER_MARKER in json.dumps(body, sort_keys=True)
     )
 
     graph = build_graph(settings, build_checkpointer(settings))
     result = dict(
-        graph.invoke(seeded(SIMPLE_PUBLIC_REQUEST), run_config(settings, str(uuid.uuid4())))
+        graph.invoke(
+            seeded("Compare our refund policy with three competitors."),
+            run_config(settings, str(uuid.uuid4())),
+        )
     )
 
-    asked = drafter_requests(cloud)
-    assert len(asked) == settings.max_retries + 2, (
-        f"the drafter made {len(asked)} attempt(s); {settings.max_retries + 1} retried "
-        "attempts and one fallback were due. A cheap-routed request lost the fallback the "
-        "capable route has"
+    asked = [str(body.get("model", "")) for body in drafter_requests(cloud)]
+    assert asked == [CLOUD_CAPABLE] * (settings.max_retries + 1) + [CLOUD_CHEAP], (
+        f"the capable tier did not exhaust its retries and then degrade. Asked for: {asked}"
     )
-    assert [str(body.get("model", "")) for body in asked] == [CLOUD_CHEAP] * len(asked), (
-        "the fallback escalated to a more expensive tier. A fallback that costs more on "
-        f"exhaustion fires when nobody is watching. Asked for: "
-        f"{[str(body.get('model', '')) for body in asked]}"
-    )
-    assert result.get("draft"), "the fallback did not answer, so nothing was demonstrated"
+    assert result.get("draft"), "the degraded call did not answer"
 
 
 def test_no_tier_decision_widens_the_lane(cloud: StubServer, sovereign: StubServer) -> None:
@@ -372,10 +409,13 @@ def test_no_tier_decision_widens_the_lane(cloud: StubServer, sovereign: StubServ
         )
 
     attempts = drafter_requests(sovereign)
-    assert len(attempts) == settings.max_retries + 2, (
-        f"the drafter made {len(attempts)} attempt(s) on the sovereign endpoint; the whole "
-        "chain including the fallback was due there. A chain that was never spent cannot "
-        "show where it would have gone next"
+    # The sovereign lane binds the cheap tier, which has no fallback, so the whole chain is
+    # its retries -- see ADR 0004 item 16. Spending all of them is the precondition: a chain
+    # with attempts left cannot show where it would have gone when it ran out.
+    assert len(attempts) == settings.max_retries + 1, (
+        f"the drafter made {len(attempts)} attempt(s) on the sovereign endpoint; "
+        f"{settings.max_retries + 1} were due, and the chain has to be spent before its "
+        "next destination means anything"
     )
     assert cloud.behaviour.every_request == [], (
         "a cheap-tier chain on the sovereign lane reached the third-party endpoint"

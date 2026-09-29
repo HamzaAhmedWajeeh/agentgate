@@ -345,11 +345,14 @@ def build_resilient_model(
     The signature is :class:`ModelFactory`'s, deliberately: this is the factory the graph
     injects, so a node asks for a tier and gets a resilient model without knowing it.
 
-    **The cheap tier falls back to the cheap tier**, which is one more attempt with a freshly
-    constructed client and is not much more than that -- see ADR 0004 item 16, which says so
-    plainly rather than calling it resilience it does not have. It is not an escalation to the
-    capable tier: a fallback that costs more on exhaustion fires exactly when nobody is
-    watching, and it would arrive as a side effect of wiring a *cost* decision.
+    **The cheap tier has no fallback, so that ``max_retries`` means retries.** The only call
+    that could sit beneath it is another call to the same model through the same connection
+    pool, which would make a cheap-routed request cost ``max_retries + 2`` provider calls --
+    two of them at ``max_retries=0``, where the operator asked for one. The capable tier keeps
+    its fallback because the call beneath it is a *different model*: a degradation rather than
+    a spare attempt. Escalating the cheap tier to the capable one was rejected outright; a
+    fallback that costs more on exhaustion fires exactly when nobody is watching. ADR 0004
+    item 16 has the measurement and the decision.
 
     **The lane cannot widen.** ``lane`` is passed once, and both leaves reach it through
     :func:`build_model`, which narrows it against the deployment with ``narrower_of``. There is
@@ -364,7 +367,9 @@ def build_resilient_model(
         lane: What the policy router decided this request may reach.
     """
     primary = build_model(settings, tier, call_class, lane=lane)
-    fallback = build_model(settings, Tier.CHEAP, call_class, lane=lane)
+    fallback = (
+        build_model(settings, Tier.CHEAP, call_class, lane=lane) if tier is not Tier.CHEAP else None
+    )
     return ResilientChatModel(
         primary=primary,
         fallback=fallback,
