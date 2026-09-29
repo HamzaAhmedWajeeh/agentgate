@@ -42,13 +42,34 @@ Non-negotiable, and the reason each exists is in the inventory somewhere.
 
 **A component correct in isolation, tested in isolation, and connected to nothing.** Items 13, 15,
 16, 17, 19 and 24 are all that shape — 24 was the headline claim: the human gate approved a draft
-while no action existed for it to approve. The policy router chose lanes correctly for four phases while
-nothing applied the choice. `build_resilient_model` retries correctly today and no node calls it.
-Item 19 was a row that said *closed*, named the class that closed it, and that class was on no
-path until the run ledger wired it.
+while no action existed for it to approve. The policy router chose lanes correctly for four phases
+while nothing applied the choice. Item 19 was a row that said *closed*, named the class that closed
+it, and that class was on no path until the run ledger wired it.
 
 A unit test cannot find this. An integration test only finds it if it asserts on something outside
 the process. **When something looks done, check what calls it.**
+
+### The chain that closed 15, 16 and 27 — the argument for wiring things
+
+All three are closed now, and *how* they closed is the point rather than the fact:
+
+1. **Item 15** was `build_resilient_model`: retries and fallbacks, correct, tested against real HTTP
+   errors, called from nowhere for four phases.
+2. **Wiring it produced item 27** in the first full test run. `with_retry` retries on every
+   exception, and the ledger raises a crossed ceiling from inside the callback of the call that
+   crossed it — so a budget guard read as a 500 and the answer to it was four more billed calls.
+   That defect had been in the code since the day it was written. It could not fail, because nothing
+   called it. **An unwired component's defects are not dormant, they are unobservable.**
+3. **Deciding item 16** produced the next one. Removing the cheap tier's fallback — because a
+   fallback to the same model through the same connection pool made `max_retries` mean something
+   other than what it says — exposed that a sovereign deployment then has no working fallback on
+   any request. Three decisions compose into that, and the third is that the sovereign lane names
+   one model for both tiers, so even the capable tier's fallback degrades to itself.
+
+So the chain runs: a green test file hid a defect → wiring exposed it → fixing it exposed a
+property of the recommended deployment. **None of those three steps was reachable from the one
+before it by reading.** That is the case for wiring a thing rather than trusting its tests, and it
+is why `docs/concept-map.md` carries an enforced *built, not wired* status at all.
 
 ## Item 17: decided and closed for hybrid deployments
 
@@ -108,15 +129,38 @@ their test without the files; the next commit tracks them and narrows the rule t
 and CI are green. **Decided 2026-09-29: leave it.** Rewriting pushed history costs more than the
 inconsistency, and the commit is inside a merge commit now. Do not rewrite it.
 
+## One undecided question
+
+**Does an air-gapped operator want a degradation step at all?** A sovereign deployment makes
+`max_retries + 1` attempts and then the run fails, with no fallback on any request — stated in the
+README's limitations and pinned by
+`tests/unit/test_registry.py::test_a_sovereign_deployment_has_no_working_fallback_on_either_tier`.
+Whether such an operator would rather a run fail cleanly than come back with a weaker answer from
+a smaller local model is not known, because nobody has asked one, and this repository does not
+invent an answer it has not measured.
+
+**The trigger to reopen it is a second sovereign model identifier, not a preference.** While the
+sovereign lane resolves both tiers to one `sovereign_model`, there is nothing to degrade *to* and
+the question is academic. The day `sovereign_capable_model` and `sovereign_cheap_model` exist, the
+capable tier's fallback becomes real on that lane and the cheap tier's own question reopens on its
+own terms. ADR 0004 item 16 has the record.
+
 ## What comes next, in order
 
-1. **Item 15: wire `build_resilient_model`.** Retries and fallbacks exist, are tested, and nothing
-   calls them. The constraint: **a fallback must never cross to a less contained lane.** Every call
-   it makes is a model call, so it is charged to the run ledger like any other.
-2. **Item 16: the routed tier.** `bind_lane` binds a tier and no channel carries it. It needs a
-   `tier` state channel, which is a checkpoint-compatibility decision — ask before choosing.
-3. **Then Phases 6 → 7 → 9 → 8:** store-backed memory and time travel; the FastAPI/SSE surface (which
-   is also where the session ceiling gets a caller); evals; observability.
+**Phases 6 → 7 → 9 → 8:** store-backed memory and time travel; the FastAPI/SSE surface (which is
+also where the session ceiling gets a caller); evals; observability.
+
+**Nothing in the leak inventory is open and closable by a code change.** Items 15, 16 and 27 are
+closed. What remains open needs something other than code, and it is worth knowing which is which
+before anyone goes looking for work there:
+
+- **Item 12** is a list of capabilities nobody has measured. Each needs a billed call against a
+  real provider, or a real Ollama or vLLM, and streaming belongs to Phase 7 anyway.
+- **Items 14 and 17** are narrowed to a remainder that is structural rather than unfixed: a
+  cloud-only deployment has nowhere more contained to classify or embed on. No code closes that;
+  a second lane does.
+- **Part B's Jev rows** are all `STUB`, and enforce mode has no measured threshold. Both need a
+  billed call Hamza authorises.
 
 Nothing on this list starts without Hamza's go-ahead.
 
